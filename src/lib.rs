@@ -42,8 +42,11 @@ fn to_regex(tokens: Vec<Token>) -> Regex {
 }
 
 #[derive(Debug)]
-struct LikeMatcher {
-    regex: Regex,
+enum LikeMatcher {
+    /// Matches the empty string.
+    Empty,
+
+    Regex(Regex),
 }
 
 impl LikeMatcher {
