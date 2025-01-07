@@ -1,3 +1,4 @@
+use memchr::memmem::Finder;
 use nom::branch::alt;
 use nom::bytes::complete::{tag, take_till1};
 use nom::combinator::{map, value};
@@ -6,7 +7,7 @@ use nom::multi::many0;
 
 #[derive(Debug, Clone)]
 enum Token<'a> {
-    Literal(&'a str),
+    Literal(Finder<'a>),
     Any,
     Single,
 }
@@ -15,11 +16,11 @@ fn lex(s: &str) -> Vec<Token> {
     many0(alt((
         value(Token::Any, tag::<_, _, (_, ErrorKind)>("%")),
         value(Token::Single, tag("_")),
-        value(Token::Literal("\\"), tag("\\\\")),
-        value(Token::Literal("%"), tag("\\%")),
-        value(Token::Literal("_"), tag("\\_")),
+        value(Token::Literal(Finder::new("\\")), tag("\\\\")),
+        value(Token::Literal(Finder::new("%")), tag("\\%")),
+        value(Token::Literal(Finder::new("_")), tag("\\_")),
         map(take_till1(|c| c == '%' || c == '_' || c == '\\'), |t| {
-            Token::Literal(t)
+            Token::Literal(Finder::new(t))
         }),
     )))(s)
     .unwrap()
@@ -59,7 +60,7 @@ impl<'a> LikeMatcher<'a> {
         while t < self.tokens.len() {
             if t == self.tokens.len() - 1 {
                 // This is the last token.
-                return match self.tokens[t] {
+                return match &self.tokens[t] {
                     Token::Any => {
                         // We can match anything that's left. We're done.
                         true
@@ -73,7 +74,7 @@ impl<'a> LikeMatcher<'a> {
 
                     Token::Literal(literal) => {
                         // Check whether the remaining input matches the literal.
-                        &input[s..] == literal
+                        input[s..].as_bytes() == literal.needle()
                     }
                 };
             }
@@ -91,9 +92,9 @@ impl<'a> LikeMatcher<'a> {
 
                 (Token::Any, Token::Literal(literal)) => {
                     // Skip to the next literal.
-                    if let Some(x) = input[s..].find(literal) {
+                    if let Some(x) = literal.find(&input[s..].as_bytes()) {
                         // We found the literal. Skip over it and both tokens.
-                        s += x + literal.len();
+                        s += x + literal.needle().len();
                         t += 2;
                     } else {
                         // We did not find the literal.
@@ -109,9 +110,9 @@ impl<'a> LikeMatcher<'a> {
                 }
 
                 (Token::Literal(literal), _) => {
-                    if input[s..].starts_with(literal) {
+                    if input[s..].as_bytes().starts_with(literal.needle()) {
                         // We found the literal. Skip over it.
-                        s += literal.len();
+                        s += literal.needle().len();
                         t += 1;
                     } else {
                         // We did not find the literal.

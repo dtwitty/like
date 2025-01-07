@@ -4,6 +4,5 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-encode_unicode = "1.0.0"
 memchr = "2.7.4"
 nom = "7.1.3"
