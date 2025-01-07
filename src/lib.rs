@@ -141,14 +141,14 @@ impl<'a> LikeMatcher<'a> {
 
                 (Token::Literal(literal), _) => {
                     let needle = literal.needle();
-                    if input[s..].starts_with(needle) {
-                        // We found the literal. Skip over it.
-                        s += needle.len();
-                        t += 1;
-                    } else {
+                    if !(input[s..].starts_with(needle)) {
                         // We did not find the literal.
                         return false;
                     }
+
+                    // We found the literal. Skip over it.
+                    s += needle.len();
+                    t += 1;
                 }
             }
         }
