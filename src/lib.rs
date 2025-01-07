@@ -249,7 +249,7 @@ mod tests {
     }
 
     proptest! {
-        #![proptest_config(ProptestConfig::with_cases(1 << 12))]
+        #![proptest_config(ProptestConfig::with_cases(1 << 14))]
 
         #[test]
         fn test_matching_never_fails(pattern in bytes_regex(".*").unwrap(), input in bytes_regex(".*").unwrap()) {
