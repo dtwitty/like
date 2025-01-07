@@ -61,7 +61,7 @@ fn normalize(tokens: &mut Vec<Token>) {
 }
 
 #[derive(Debug, Clone)]
-struct LikeMatcher<'a> {
+pub struct LikeMatcher<'a> {
     tokens: Vec<Token<'a>>,
 }
 
