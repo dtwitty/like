@@ -94,7 +94,8 @@ impl<'a> LikeMatcher<'a> {
                     // Skip to the next literal.
                     if let Some(x) = literal.find(&input[s..].as_bytes()) {
                         // We found the literal. Skip over it and both tokens.
-                        s += x + literal.needle().len();
+                        let needle = literal.needle();
+                        s += x + needle.len();
                         t += 2;
                     } else {
                         // We did not find the literal.
@@ -103,16 +104,20 @@ impl<'a> LikeMatcher<'a> {
                 }
 
                 (Token::Single, _) => {
-                    // Skip over the single character.
-                    // If there isn't one, the loop condition will catch it.
+                    // Skip over the single character if we can.
+                    if s == input.len() {
+                        return false;
+                    }
+
                     s += 1;
                     t += 1;
                 }
 
                 (Token::Literal(literal), _) => {
-                    if input[s..].as_bytes().starts_with(literal.needle()) {
+                    let needle = literal.needle();
+                    if input[s..].as_bytes().starts_with(needle) {
                         // We found the literal. Skip over it.
-                        s += literal.needle().len();
+                        s += needle.len();
                         t += 1;
                     } else {
                         // We did not find the literal.
@@ -122,9 +127,7 @@ impl<'a> LikeMatcher<'a> {
             }
         }
 
-        let tokens_done = t == self.tokens.len();
-        let input_done = s == input.len();
-        tokens_done && input_done
+        true
     }
 }
 
@@ -162,6 +165,30 @@ mod tests {
     fn test_single() {
         assert!(LikeMatcher::new("h_llo").matches("hello"));
         assert!(!LikeMatcher::new("h_llo").matches("world"));
+    }
+
+    #[test]
+    fn test_any() {
+        assert!(LikeMatcher::new("%").matches("hello world"));
+        assert!(LikeMatcher::new("%%").matches("hello world"));
+    }
+
+    #[test]
+    fn test_any_single() {
+        assert!(!LikeMatcher::new("%_").matches(""));
+        assert!(!LikeMatcher::new("_%").matches(""));
+        assert!(LikeMatcher::new("%_").matches("hello world"));
+        assert!(LikeMatcher::new("_%").matches("hello world"));
+        assert!(LikeMatcher::new("%_").matches("h"));
+        assert!(LikeMatcher::new("_%").matches("h"));
+        assert!(LikeMatcher::new("h_%o").matches("hello"));
+        assert!(LikeMatcher::new("h%_o").matches("hello"));
+        assert!(LikeMatcher::new("h_%o").matches("hlo"));
+        assert!(LikeMatcher::new("h%_o").matches("hlo"));
+        assert!(!LikeMatcher::new("h_%o").matches("ho"));
+        assert!(!LikeMatcher::new("h%_o").matches("ho"));
+        assert!(!LikeMatcher::new("h_%o").matches("world"));
+        assert!(!LikeMatcher::new("h%_o").matches("world"));
     }
 
     #[test]
