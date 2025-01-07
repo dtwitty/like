@@ -249,6 +249,8 @@ mod tests {
     }
 
     proptest! {
+        #![proptest_config(ProptestConfig::with_cases(1 << 12))]
+
         #[test]
         fn test_parsing_never_fails(pattern in bytes_regex(".*").unwrap()) {
             LikeMatcher::new(&pattern);
