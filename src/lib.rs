@@ -252,11 +252,6 @@ mod tests {
         #![proptest_config(ProptestConfig::with_cases(1 << 12))]
 
         #[test]
-        fn test_parsing_never_fails(pattern in bytes_regex(".*").unwrap()) {
-            LikeMatcher::new(&pattern);
-        }
-
-        #[test]
         fn test_matching_never_fails(pattern in bytes_regex(".*").unwrap(), input in bytes_regex(".*").unwrap()) {
             let matcher = LikeMatcher::new(&pattern);
             matcher.matches(&input);
