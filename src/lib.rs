@@ -1,8 +1,3 @@
-use nom::branch::alt;
-use nom::bytes::complete::{tag, take_till1};
-use nom::combinator::{map, value};
-use nom::error::{context, ErrorKind};
-use nom::multi::many0;
 use regex::Regex;
 
 #[derive(Debug, Clone)]
@@ -12,40 +7,29 @@ enum Token<'a> {
     Single,
 }
 
-fn lex(s: &str) -> Vec<Token> {
-    // Handle special characters.
-    let any = value(Token::Any, tag::<_, _, (_, ErrorKind)>("%"));
-    let single = value(Token::Single, tag("_"));
+fn lex(mut s: &str) -> Vec<Token> {
+    let mut v = Vec::new();
+    while !s.is_empty() {
+        let (t, rest) = lex_one(s);
+        v.push(t);
+        s = rest;
+    }
+    v
+}
 
-    // Handle escapes.
-    let escaped_slash = value(Token::Literal("\\"), tag("\\\\"));
-    let escaped_any = value(Token::Literal("%"), tag("\\%"));
-    let escaped_single = value(Token::Literal("_"), tag("\\_"));
-    let lone_escape = map(tag("\\"), |_| Token::Literal("\\"));
-
-    // Handle literals.
-    let until_special = take_till1(|c| c == '%' || c == '_' || c == '\\');
-    let literal = map(until_special, |t| Token::Literal(t));
-
-    // Combine all the parsers for a single token.
-    let single_token = alt((
-        any,
-        single,
-        escaped_slash,
-        escaped_any,
-        escaped_single,
-        lone_escape,
-        literal,
-    ));
-
-    // Use the many0 combinator to parse multiple single tokens.
-    let mut all = many0(single_token);
-
-    // Run the lexer.
-    let lexed = all(s);
-
-    // The unwrap is safe because all strings are valid patterns.
-    lexed.unwrap().1
+fn lex_one(i: &str) -> (Token, &str) {
+    match i {
+        s if s.starts_with('%') => (Token::Any, &s[1..]),
+        s if s.starts_with('_') => (Token::Single, &s[1..]),
+        s if s.starts_with("\\\\") => (Token::Literal("\\"), &s[2..]),
+        s if s.starts_with("\\%") => (Token::Literal("%"), &s[2..]),
+        s if s.starts_with("\\_") => (Token::Literal("_"), &s[2..]),
+        s if s.starts_with('\\') => (Token::Literal("\\"), &s[1..]),
+        _ => {
+            let x = memchr::memchr3(b'%', b'_', b'\\', i.as_bytes()).unwrap_or(i.len());
+            (Token::Literal(&i[..x]), &i[x..])
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -65,7 +49,7 @@ impl LikeMatcher {
             match t {
                 Token::Literal(l) => regex.push_str(&regex::escape(l)),
                 Token::Any => regex.push_str(".*"),
-                Token::Single => regex.push_str("."),
+                Token::Single => regex.push('.'),
             }
         }
         regex.push('$');
@@ -191,9 +175,20 @@ mod tests {
             matcher.matches(&input);
         }
 
+        #[test]
+        fn test_matching_never_fails_special(pattern in r".*[%_\\].*", input in ".*") {
+            let matcher = LikeMatcher::new(&pattern);
+            matcher.matches(&input);
+        }
 
         #[test]
-        fn test_literals_always_match(input in "[^%_\\\\]*") {
+        fn test_matching_never_fails_consecutive_special(pattern in r".*[%_\\]{2}.*", input in ".*") {
+            let matcher = LikeMatcher::new(&pattern);
+            matcher.matches(&input);
+        }
+
+        #[test]
+        fn test_literals_always_match(input in r"[^%_\\]*") {
             let matcher = LikeMatcher::new(&input);
             assert!(matcher.matches(&input));
         }
