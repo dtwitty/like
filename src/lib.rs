@@ -13,9 +13,11 @@ enum Token<'a> {
 }
 
 fn lex(s: &str) -> Vec<Token> {
-    // Handle special characters and escapes.
+    // Handle special characters.
     let any = value(Token::Any, tag::<_, _, (_, ErrorKind)>("%"));
     let single = value(Token::Single, tag("_"));
+
+    // Handle escapes.
     let escaped_slash = value(Token::Literal("\\"), tag("\\\\"));
     let escaped_any = value(Token::Literal("%"), tag("\\%"));
     let escaped_single = value(Token::Literal("_"), tag("\\_"));
@@ -26,23 +28,24 @@ fn lex(s: &str) -> Vec<Token> {
     let literal = map(until_special, |t| Token::Literal(t));
 
     // Combine all the parsers for a single token.
-    let single_token = context(
-        "single_token",
-        alt((
-            any,
-            single,
-            escaped_slash,
-            escaped_any,
-            escaped_single,
-            lone_escape,
-            literal,
-        )),
-    );
+    let single_token = alt((
+        any,
+        single,
+        escaped_slash,
+        escaped_any,
+        escaped_single,
+        lone_escape,
+        literal,
+    ));
 
     // Use the many0 combinator to parse multiple single tokens.
     let mut all = many0(single_token);
-    let parsed = all(s);
-    parsed.unwrap().1
+
+    // Run the lexer.
+    let lexed = all(s);
+
+    // The unwrap is safe because all strings are valid patterns.
+    lexed.unwrap().1
 }
 
 #[derive(Debug, Clone)]
@@ -52,10 +55,12 @@ pub struct LikeMatcher {
 
 impl LikeMatcher {
     pub fn new(s: &str) -> LikeMatcher {
+        // Lex the string into tokens.
         let tokens = lex(s);
+
+        // Build a regex from the tokens.
         let mut regex = String::new();
         regex.push('^');
-
         for t in tokens {
             match t {
                 Token::Literal(l) => regex.push_str(&regex::escape(l)),
@@ -63,7 +68,6 @@ impl LikeMatcher {
                 Token::Single => regex.push_str("."),
             }
         }
-
         regex.push('$');
 
         let re = Regex::new(&regex).unwrap();
@@ -173,8 +177,13 @@ mod tests {
     }
 
     proptest! {
-        // Generate lots of test cases.
-        #![proptest_config(ProptestConfig::with_cases(1 << 14))]
+        #![proptest_config(ProptestConfig {
+            // Generate lots of test cases.
+            cases: 1 << 14,
+            // Use small strings to explore more interesting behavior.
+            max_default_size_range: 16,
+            .. ProptestConfig::default()
+        })]
 
         #[test]
         fn test_matching_never_fails(pattern in ".*", input in ".*") {
