@@ -7,16 +7,6 @@ enum Token<'a> {
     Single,
 }
 
-fn lex(mut s: &str) -> Vec<Token> {
-    let mut v = Vec::new();
-    while !s.is_empty() {
-        let (t, rest) = lex_one(s);
-        v.push(t);
-        s = rest;
-    }
-    v
-}
-
 fn lex_one(i: &str) -> (Token, &str) {
     match i {
         s if s.starts_with('%') => (Token::Any, &s[1..]),
@@ -26,8 +16,9 @@ fn lex_one(i: &str) -> (Token, &str) {
         s if s.starts_with("\\_") => (Token::Literal("_"), &s[2..]),
         s if s.starts_with('\\') => (Token::Literal("\\"), &s[1..]),
         _ => {
-            let x = memchr::memchr3(b'%', b'_', b'\\', i.as_bytes()).unwrap_or(i.len());
-            (Token::Literal(&i[..x]), &i[x..])
+            let pos = memchr::memchr3(b'%', b'_', b'\\', i.as_bytes());
+            let pos = pos.unwrap_or(i.len());
+            (Token::Literal(&i[..pos]), &i[pos..])
         }
     }
 }
@@ -39,21 +30,34 @@ pub struct LikeMatcher {
 
 impl LikeMatcher {
     pub fn new(s: &str) -> LikeMatcher {
-        // Lex the string into tokens.
-        let tokens = lex(s);
+        // Mutable reference to the input string, which we will slice off as we lex.
+        let mut s = s;
 
         // Build a regex from the tokens.
         let mut regex = String::new();
+
+        // Anchor the regex to the beginning of the string.
         regex.push('^');
-        for t in tokens {
+
+        while !s.is_empty() {
+            // Lex off a single token.
+            let (t, rest) = lex_one(s);
+
+            // Add the token to the regex.
             match t {
                 Token::Literal(l) => regex.push_str(&regex::escape(l)),
                 Token::Any => regex.push_str(".*"),
                 Token::Single => regex.push('.'),
             }
+
+            // Slice the token off the string.
+            s = rest;
         }
+
+        // Anchor the regex to the end of the string.
         regex.push('$');
 
+        // Build the regex, which is guaranteed to be valid.
         let re = Regex::new(&regex).unwrap();
         LikeMatcher { re }
     }
