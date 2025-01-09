@@ -511,8 +511,6 @@ mod tests {
         #![proptest_config(ProptestConfig {
             // Generate lots of test cases.
             cases: 1 << 14,
-            // Use small strings to explore more interesting behavior.
-            max_default_size_range: 16,
             .. ProptestConfig::default()
         })]
 
@@ -532,13 +530,6 @@ mod tests {
         #[test]
         // The first pattern can be read as "A string containing 2 consecutive special characters".
         fn test_matching_never_fails_consecutive_special(pattern in r".*[%_\\]{2}.*", input in ".*") {
-            let matcher = LikeMatcher::new(&pattern);
-            matcher.matches(&input);
-        }
-
-        #[test]
-        // The first pattern can be read as "A string of `_` and `%` containing 3 `_` characters".
-        fn test_only_special(pattern in r".*[%_\\]{2}.*", input in ".{3,10}") {
             let matcher = LikeMatcher::new(&pattern);
             matcher.matches(&input);
         }
