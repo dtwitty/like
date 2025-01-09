@@ -1,5 +1,6 @@
 use memchr::memmem::Finder;
 use std::borrow::Cow;
+use std::collections::VecDeque;
 use std::ops::Deref;
 use std::sync::Arc;
 
@@ -329,72 +330,65 @@ impl NFA {
 
     pub fn matches(&self, s: &str) -> bool {
         // Holds the execution state of the NFA.
-        let mut state_to_rem = vec![(self.transitions.start_state(), s)];
-        let mut next_state_to_rem = Vec::new();
+        let mut state_to_rem = VecDeque::new();
+        state_to_rem.push_back((self.transitions.start_state(), s));
 
-        loop {
-            for (state, rem) in &state_to_rem {
-                if *state == self.transitions.end_state() {
-                    if rem.is_empty() {
-                        // We found a match!
-                        return true;
-                    }
-
-                    // This path didn't work because we finished the NFA before finishing the string.
-                    continue;
+        while let Some((state, rem)) = state_to_rem.pop_front() {
+            if state == self.transitions.end_state() {
+                if rem.is_empty() {
+                    // We found a match!
+                    return true;
                 }
 
-                for (next_state, transition) in self.transitions.transitions(*state) {
-                    match transition {
-                        NFATransition::Skip(n) => {
-                            let (num_chars, char_bytes) =
-                                rem.chars()
-                                    .take(*n)
-                                    .fold((0, 0), |(num_chars, char_bytes), c| {
-                                        (num_chars + 1, char_bytes + c.len_utf8())
-                                    });
+                // This path didn't work because we finished the NFA before finishing the string.
+                continue;
+            }
 
-                            if num_chars < *n {
-                                // We can't skip this many characters.
-                                continue;
-                            }
+            for (next_state, transition) in self.transitions.transitions(state) {
+                match transition {
+                    NFATransition::Skip(n) => {
+                        let (num_chars, char_bytes) = rem
+                            .chars()
+                            .take(*n)
+                            .fold((0, 0), |(num_chars, char_bytes), c| {
+                                (num_chars + 1, char_bytes + c.len_utf8())
+                            });
 
-                            next_state_to_rem.push((next_state, &rem[char_bytes..]));
+                        if num_chars < *n {
+                            // We can't skip this many characters.
+                            continue;
                         }
 
-                        NFATransition::Prefix(prefix) => {
-                            if rem.starts_with(prefix.deref()) {
-                                next_state_to_rem.push((next_state, &rem[prefix.len()..]));
-                            }
-                        }
+                        state_to_rem.push_back((next_state, &rem[char_bytes..]));
+                    }
 
-                        NFATransition::SkipToSubString(finder) => {
-                            if let Some(pos) = finder.find(rem.as_bytes()) {
-                                let consumed_bytes = pos + finder.needle().len();
-                                next_state_to_rem.push((next_state, &rem[consumed_bytes..]));
-                            }
+                    NFATransition::Prefix(prefix) => {
+                        if rem.starts_with(prefix.deref()) {
+                            state_to_rem.push_back((next_state, &rem[prefix.len()..]));
                         }
+                    }
 
-                        NFATransition::End => {
-                            if rem.is_empty() {
-                                next_state_to_rem.push((next_state, rem));
-                            }
+                    NFATransition::SkipToSubString(finder) => {
+                        if let Some(pos) = finder.find(rem.as_bytes()) {
+                            let consumed_bytes = pos + finder.needle().len();
+                            state_to_rem.push_back((next_state, &rem[consumed_bytes..]));
                         }
+                    }
 
-                        NFATransition::All => {
-                            next_state_to_rem.push((next_state, ""));
+                    NFATransition::End => {
+                        if rem.is_empty() {
+                            state_to_rem.push_back((next_state, rem));
                         }
+                    }
+
+                    NFATransition::All => {
+                        state_to_rem.push_back((next_state, ""));
                     }
                 }
             }
-
-            if next_state_to_rem.is_empty() {
-                return false;
-            }
-
-            std::mem::swap(&mut state_to_rem, &mut next_state_to_rem);
-            next_state_to_rem.clear();
         }
+
+        false
     }
 }
 
