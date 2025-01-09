@@ -2,6 +2,7 @@ use memchr::memmem::Finder;
 use std::borrow::Cow;
 use std::ops::Deref;
 
+/// A unit of a LIKE pattern.
 #[derive(Debug, Clone)]
 enum Token<'a> {
     Literal(&'a str),
@@ -9,6 +10,7 @@ enum Token<'a> {
     Single,
 }
 
+/// Lexes a LIKE pattern into tokens. Never fails because all strings are valid patterns.
 fn lex(input: &str) -> Vec<Token> {
     let mut tokens = Vec::new();
     let mut s = input;
@@ -22,6 +24,7 @@ fn lex(input: &str) -> Vec<Token> {
     tokens
 }
 
+/// Lexes a single token from the input. Never fails because all strings are valid patterns.
 fn lex_one(i: &str) -> (Token, &str) {
     match i {
         s if s.starts_with('%') => (Token::Any, &s[1..]),
@@ -38,9 +41,10 @@ fn lex_one(i: &str) -> (Token, &str) {
     }
 }
 
+/// Matching units that can non-deterministically consume characters from a string.
 #[derive(Debug, Clone)]
 enum Matcher<'a> {
-    /// Matches a literal string.
+    /// Consume a literal string.
     Literal(Cow<'a, str>),
     /// Consume any number of characters and match a literal.
     UntilLiteral(Cow<'a, str>),
@@ -54,6 +58,9 @@ enum Matcher<'a> {
     Finish,
 }
 
+/// A sequence of matchers.
+/// This can be thought of as the "Intermediate Representation" (IR) of the matching engine.
+/// We run optimizations on it to reduce the search space during matching.
 #[derive(Debug, Clone)]
 struct Matchers<'a> {
     matchers: Vec<Matcher<'a>>,
@@ -92,17 +99,28 @@ impl<'a> Matchers<'a> {
             let a = &self.matchers[i];
             let b = &self.matchers[i + 1];
 
+            // This match block is essentially the list of optimizations.
             match (a, b) {
+                // Remove empty literals.
                 (Matcher::Literal(s), _) if s.is_empty() => {
                     i += 1;
                     changed = true;
                 }
 
+                // Remove empty character counters.
                 (Matcher::Exactly(0), _) => {
                     i += 1;
                     changed = true;
                 }
 
+                // Remove empty "skip to literal".
+                (Matcher::UntilLiteral(s), _) if s.is_empty() => {
+                    i += 1;
+                    changed = true;
+                }
+
+                // Combine adjacent literals.
+                // Escaping can cause literals to be split during lexing.
                 (Matcher::Literal(ref a), Matcher::Literal(ref b)) => {
                     let a = a.clone();
                     let b = b.clone();
@@ -112,6 +130,18 @@ impl<'a> Matchers<'a> {
                     changed = true;
                 }
 
+                // Combine adjacent "skip to literal" and literal.
+                (Matcher::UntilLiteral(ref a), Matcher::Literal(ref b)) => {
+                    let a = a.clone();
+                    let b = b.clone();
+                    let c = Cow::Owned(a.to_string() + b.deref());
+                    v.push(Matcher::UntilLiteral(c));
+                    i += 1;
+                    changed = true;
+                }
+
+                // Combine "at least" and literal to make "skip to literal".
+                // This allows us to use highly-optimized substring search algorithms.
                 (Matcher::AtLeast(a), Matcher::Literal(s)) => {
                     if *a > 0 {
                         v.push(Matcher::AtLeast(*a));
@@ -121,25 +151,23 @@ impl<'a> Matchers<'a> {
                     changed = true;
                 }
 
-                (Matcher::AtLeast(a), Matcher::AtLeast(b)) => {
-                    v.push(Matcher::AtLeast(a + b));
-                    i += 1;
-                    changed = true;
-                }
-
+                // Combine character counters like "___" into a single matcher.
                 (Matcher::Exactly(a), Matcher::Exactly(b)) => {
                     v.push(Matcher::Exactly(a + b));
                     i += 1;
                     changed = true;
                 }
 
+                // Combine any combination of "at least" and "exactly" counters.
                 (Matcher::AtLeast(a), Matcher::Exactly(b))
+                | (Matcher::AtLeast(a), Matcher::AtLeast(b))
                 | (Matcher::Exactly(b), Matcher::AtLeast(a)) => {
                     v.push(Matcher::AtLeast(a + b));
                     i += 1;
                     changed = true;
                 }
 
+                // Optimizes for "match any ending" patterns like "hello%".
                 (Matcher::AtLeast(a), Matcher::Finish | Matcher::End) => {
                     if *a > 0 {
                         v.push(Matcher::Exactly(*a));
@@ -554,24 +582,34 @@ mod tests {
         })]
 
         #[test]
-        fn test_matching_never_fails(pattern in ".*", input in ".*") {
+        fn test_matching_never_sfails(pattern in ".*", input in ".*") {
             let matcher = LikeMatcher::new(&pattern);
             matcher.matches(&input);
         }
 
         #[test]
-        fn test_matching_never_fails_special(pattern in r".*[%_\\].*", input in ".*") {
+        // The first pattern can be read as "A string containing a special character".
+        fn test_matching_never_panics_special(pattern in r".*[%_\\].*", input in ".*") {
             let matcher = LikeMatcher::new(&pattern);
             matcher.matches(&input);
         }
 
         #[test]
-        fn test_matching_never_fails_consecutive_special(pattern in r".*[%_\\]{2}.*", input in ".*") {
+        // The first pattern can be read as "A string containing 2 consecutive special characters".
+        fn test_matching_never_panics_consecutive_special(pattern in r".*[%_\\]{2}.*", input in ".*") {
             let matcher = LikeMatcher::new(&pattern);
             matcher.matches(&input);
         }
 
         #[test]
+        // The first pattern can be read as "A string of `_` and `%` containing 3 `_` characters".
+        fn test_only_special(pattern in r"(%*_%*){3}", input in ".{3,10}") {
+            let matcher = LikeMatcher::new(&pattern);
+            assert!(matcher.matches(&input));
+        }
+
+        #[test]
+        // The pattern can be read as "A string not containing any special characters".
         fn test_literals_always_match(input in r"[^%_\\]*") {
             let matcher = LikeMatcher::new(&input);
             assert!(matcher.matches(&input));
