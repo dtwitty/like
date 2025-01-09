@@ -1,3 +1,4 @@
+use memchr::memmem::Finder;
 use std::borrow::Cow;
 use std::ops::Deref;
 
@@ -41,6 +42,8 @@ fn lex_one(i: &str) -> (Token, &str) {
 enum Matcher<'a> {
     /// Matches a literal string.
     Literal(Cow<'a, str>),
+    /// Consume any number of characters and match a literal.
+    UntilLiteral(Cow<'a, str>),
     /// Matches any character, at least the given number of times.
     AtLeast(usize),
     /// Matches exactly the given number of characters.
@@ -90,11 +93,30 @@ impl<'a> Matchers<'a> {
             let b = &self.matchers[i + 1];
 
             match (a, b) {
+                (Matcher::Literal(s), _) if s.is_empty() => {
+                    i += 1;
+                    changed = true;
+                }
+
+                (Matcher::Exactly(0), _) => {
+                    i += 1;
+                    changed = true;
+                }
+
                 (Matcher::Literal(ref a), Matcher::Literal(ref b)) => {
                     let a = a.clone();
                     let b = b.clone();
                     let c = Cow::Owned(a.to_string() + b.deref());
                     v.push(Matcher::Literal(c));
+                    i += 1;
+                    changed = true;
+                }
+
+                (Matcher::AtLeast(a), Matcher::Literal(s)) => {
+                    if *a > 0 {
+                        v.push(Matcher::AtLeast(*a));
+                    }
+                    v.push(Matcher::UntilLiteral(s.clone()));
                     i += 1;
                     changed = true;
                 }
@@ -119,7 +141,9 @@ impl<'a> Matchers<'a> {
                 }
 
                 (Matcher::AtLeast(a), Matcher::Finish | Matcher::End) => {
-                    v.push(Matcher::Exactly(*a));
+                    if *a > 0 {
+                        v.push(Matcher::Exactly(*a));
+                    }
                     v.push(Matcher::Finish);
                     i += 1;
                     changed = true;
@@ -149,6 +173,8 @@ impl<'a> Matchers<'a> {
 enum NFATransition<'a> {
     /// Transition is allowed if we can consume the given prefix.
     Prefix(Cow<'a, str>),
+    /// Transition is allowed if we can skip to and consume the given substring.
+    SkipToSubString(Finder<'a>),
     /// Transition is allowed if there are n characters to consume.
     Skip(usize),
     /// Transition is always allowed, consuming no characters.
@@ -163,6 +189,9 @@ impl<'a> NFATransition<'a> {
     fn into_owned(self) -> NFATransition<'static> {
         match self {
             NFATransition::Prefix(prefix) => NFATransition::Prefix(Cow::Owned(prefix.to_string())),
+            NFATransition::SkipToSubString(finder) => {
+                NFATransition::SkipToSubString(finder.into_owned())
+            }
             NFATransition::Skip(n) => NFATransition::Skip(n),
             NFATransition::Empty => NFATransition::Empty,
             NFATransition::SucceedImmediately => NFATransition::SucceedImmediately,
@@ -171,11 +200,11 @@ impl<'a> NFATransition<'a> {
     }
 }
 
-type StateId = usize;
+type State = usize;
 
 #[derive(Debug, Clone)]
 struct TransitionTable<'a> {
-    transitions: Vec<Vec<(StateId, NFATransition<'a>)>>,
+    transitions: Vec<Vec<(State, NFATransition<'a>)>>,
 }
 
 impl<'a> TransitionTable<'a> {
@@ -186,28 +215,25 @@ impl<'a> TransitionTable<'a> {
         }
     }
 
-    fn start_state(&self) -> StateId {
+    fn start_state(&self) -> State {
         0
     }
 
-    fn end_state(&self) -> StateId {
+    fn end_state(&self) -> State {
         1
     }
 
-    fn next_state(&mut self) -> StateId {
+    fn next_state(&mut self) -> State {
         self.transitions.push(Vec::new());
         self.transitions.len() - 1
     }
 
-    fn add(&mut self, from: StateId, to: StateId, transition: NFATransition<'a>) {
+    fn add(&mut self, from: State, to: State, transition: NFATransition<'a>) {
         self.transitions[from].push((to, transition));
     }
 
-    fn transitions(
-        &self,
-        state_id: StateId,
-    ) -> impl Iterator<Item = (StateId, &NFATransition<'a>)> {
-        self.transitions[state_id]
+    fn transitions(&self, state: State) -> impl Iterator<Item = (State, &NFATransition<'a>)> {
+        self.transitions[state]
             .iter()
             .map(|&(state, ref transition)| (state, transition))
     }
@@ -235,15 +261,15 @@ struct NFA<'a> {
 impl<'a> NFA<'a> {
     pub fn from_matchers(matchers: Matchers) -> NFA {
         let mut transitions = TransitionTable::new();
-        let mut prev_state_id = transitions.start_state();
-        let end_state_id = transitions.end_state();
+        let mut prev_state = transitions.start_state();
+        let end_state = transitions.end_state();
 
         for matcher in matchers.matchers {
             match matcher {
                 Matcher::Exactly(n) => {
-                    let next_state_id = transitions.next_state();
-                    transitions.add(prev_state_id, next_state_id, NFATransition::Skip(n));
-                    prev_state_id = next_state_id;
+                    let next_state = transitions.next_state();
+                    transitions.add(prev_state, next_state, NFATransition::Skip(n));
+                    prev_state = next_state;
                 }
 
                 Matcher::AtLeast(n) => {
@@ -251,7 +277,7 @@ impl<'a> NFA<'a> {
                     let b = transitions.next_state();
 
                     // Allow transitioning to `a` by consuming n characters.
-                    transitions.add(prev_state_id, a, NFATransition::Skip(n));
+                    transitions.add(prev_state, a, NFATransition::Skip(n));
 
                     // Allow `a` to transition to itself by consuming a single character.
                     transitions.add(a, a, NFATransition::Skip(1));
@@ -259,35 +285,50 @@ impl<'a> NFA<'a> {
                     // Allow `a` to transition to `b` t any time.
                     transitions.add(a, b, NFATransition::Empty);
 
-                    prev_state_id = b;
+                    prev_state = b;
                 }
 
                 Matcher::Literal(s) => {
-                    let next_state_id = transitions.next_state();
+                    let next_state = transitions.next_state();
 
                     // Allow transitioning to the next state if the string starts with the given prefix.
-                    transitions.add(prev_state_id, next_state_id, NFATransition::Prefix(s));
+                    transitions.add(prev_state, next_state, NFATransition::Prefix(s));
 
-                    prev_state_id = next_state_id;
+                    prev_state = next_state;
+                }
+
+                Matcher::UntilLiteral(s) => {
+                    let next_state = transitions.next_state();
+                    let finder = Finder::new(s.deref()).into_owned();
+
+                    // Allow transitioning if we can skip to the given literal.
+                    transitions.add(
+                        prev_state,
+                        next_state,
+                        NFATransition::SkipToSubString(finder.clone()),
+                    );
+
+                    // Allow trying to skip again by transitioning to the same state.
+                    transitions.add(
+                        next_state,
+                        next_state,
+                        NFATransition::SkipToSubString(finder),
+                    );
+
+                    prev_state = next_state;
                 }
 
                 Matcher::End => {
-                    transitions.add(prev_state_id, end_state_id, NFATransition::End);
+                    transitions.add(prev_state, end_state, NFATransition::End);
                 }
 
                 Matcher::Finish => {
-                    transitions.add(
-                        prev_state_id,
-                        end_state_id,
-                        NFATransition::SucceedImmediately,
-                    );
+                    transitions.add(prev_state, end_state, NFATransition::SucceedImmediately);
                 }
             }
         }
 
-        NFA {
-            transitions,
-        }
+        NFA { transitions }
     }
 
     pub fn matches(&self, s: &str) -> bool {
@@ -337,6 +378,13 @@ impl<'a> NFA<'a> {
                             }
                         }
 
+                        NFATransition::SkipToSubString(finder) => {
+                            if let Some(pos) = finder.find(rem.as_bytes()) {
+                                let consumed_bytes = pos + finder.needle().len();
+                                next_state_to_rem.push((next_state, &rem[consumed_bytes..]));
+                            }
+                        }
+
                         NFATransition::SucceedImmediately => {
                             return true;
                         }
@@ -360,9 +408,7 @@ impl<'a> NFA<'a> {
 
     pub fn into_owned(self) -> NFA<'static> {
         let transitions = self.transitions.into_owned();
-        NFA {
-            transitions,
-        }
+        NFA { transitions }
     }
 }
 
