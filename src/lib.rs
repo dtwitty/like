@@ -330,12 +330,11 @@ impl NFA {
     pub fn matches(&self, s: &str) -> bool {
         // Holds the execution state of the NFA.
         let mut state_to_rem = vec![(self.transitions.start_state(), s)];
+        let mut next_state_to_rem = Vec::new();
 
         loop {
-            let mut next_state_to_rem = Vec::new();
-
-            for (state, rem) in state_to_rem {
-                if state == self.transitions.end_state() {
+            for (state, rem) in &state_to_rem {
+                if *state == self.transitions.end_state() {
                     if rem.is_empty() {
                         // We found a match!
                         return true;
@@ -345,7 +344,7 @@ impl NFA {
                     continue;
                 }
 
-                for (next_state, transition) in self.transitions.transitions(state) {
+                for (next_state, transition) in self.transitions.transitions(*state) {
                     match transition {
                         NFATransition::Skip(n) => {
                             let (num_chars, char_bytes) =
@@ -393,7 +392,8 @@ impl NFA {
                 return false;
             }
 
-            state_to_rem = next_state_to_rem;
+            std::mem::swap(&mut state_to_rem, &mut next_state_to_rem);
+            next_state_to_rem.clear();
         }
     }
 }
@@ -506,11 +506,10 @@ mod tests {
     }
 
     #[test]
-    fn test_greedy() {
-        // This is a regression test for a bug where the '%' would match as little as possible.
-        // The '%' should match as much as possible.
-        assert!(LikeMatcher::new("a '%' b c").matches("a 'd' b c 'd' b c"));
+    fn test_greediness() {
         assert!(LikeMatcher::new("'%'").matches("' 'hello' world'"));
+        assert!(LikeMatcher::new("a '%' b c").matches("a 'd' b c 'd' b c"));
+        assert!(LikeMatcher::new("'%'%'").matches("'a'a'a'a'a'a'a'a'a'"));
     }
 
     proptest! {
