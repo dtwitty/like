@@ -1,3 +1,6 @@
+use std::borrow::Cow;
+use std::ops::Deref;
+
 #[derive(Debug, Clone)]
 enum Token<'a> {
     Literal(&'a str),
@@ -6,7 +9,6 @@ enum Token<'a> {
 }
 
 fn lex(input: &str) -> Vec<Token> {
-    println!("Input: {:?}", input);
     let mut tokens = Vec::new();
     let mut s = input;
 
@@ -36,24 +38,37 @@ fn lex_one(i: &str) -> (Token, &str) {
 }
 
 #[derive(Debug, Clone)]
-enum NFATransition {
-    /// Transition is allowed if the string starts with the given prefix.
-    Prefix(String),
-    /// Transition is allowed if there is at least one character left in the string.
+enum NFATransition<'a> {
+    /// Transition is allowed if we can consume the given prefix.
+    Prefix(Cow<'a, str>),
+    /// Transition is allowed if there is a character to consumer.
     Single,
-    /// Transition is always allowed.
+    /// Transition is always allowed, consuming no characters.
     Empty,
+    /// If encountered (with any destination state), the NFA can immediately declare a match.
+    SucceedImmediately,
+}
+
+impl<'a> NFATransition<'a> {
+    fn into_owned(self) -> NFATransition<'static> {
+        match self {
+            NFATransition::Prefix(prefix) => NFATransition::Prefix(Cow::Owned(prefix.to_string())),
+            NFATransition::Single => NFATransition::Single,
+            NFATransition::Empty => NFATransition::Empty,
+            NFATransition::SucceedImmediately => NFATransition::SucceedImmediately,
+        }
+    }
 }
 
 type StateId = usize;
 
 #[derive(Debug, Clone)]
-struct TransitionTable<T> {
-    transitions: Vec<Vec<(StateId, T)>>,
+struct TransitionTable<'a> {
+    transitions: Vec<Vec<(StateId, NFATransition<'a>)>>,
 }
 
-impl<T> TransitionTable<T> {
-    fn new() -> TransitionTable<T> {
+impl<'a> TransitionTable<'a> {
+    fn new() -> TransitionTable<'a> {
         TransitionTable {
             transitions: vec![Vec::new()],
         }
@@ -68,30 +83,46 @@ impl<T> TransitionTable<T> {
         self.transitions.len() - 1
     }
 
-    fn add(&mut self, from: StateId, to: StateId, transition: T) {
+    fn add(&mut self, from: StateId, to: StateId, transition: NFATransition<'a>) {
         self.transitions[from].push((to, transition));
     }
 
-    fn transitions(&self, state_id: StateId) -> impl Iterator<Item = (StateId, &T)> {
+    fn transitions(
+        &self,
+        state_id: StateId,
+    ) -> impl Iterator<Item = (StateId, &NFATransition<'a>)> {
         self.transitions[state_id]
             .iter()
             .map(|&(state, ref transition)| (state, transition))
     }
+
+    fn into_owned(self) -> TransitionTable<'static> {
+        let transitions = self
+            .transitions
+            .into_iter()
+            .map(|transitions| {
+                transitions
+                    .into_iter()
+                    .map(|(state, transition)| (state, transition.into_owned()))
+                    .collect()
+            })
+            .collect();
+        TransitionTable { transitions }
+    }
 }
 
 #[derive(Debug, Clone)]
-struct NFA {
-    transitions: TransitionTable<NFATransition>,
+struct NFA<'a> {
+    transitions: TransitionTable<'a>,
     end_state: StateId,
 }
 
-impl NFA {
+impl<'a> NFA<'a> {
     pub fn from_tokens(tokens: Vec<Token>) -> NFA {
-        println!("Tokens: {:?}", tokens);
         let mut prev_state_id = 0;
         let mut transitions = TransitionTable::new();
 
-        for token in tokens {
+        for (i, token) in tokens.iter().enumerate() {
             match token {
                 Token::Single => {
                     let next_state_id = transitions.next_state();
@@ -104,7 +135,13 @@ impl NFA {
                     let b = transitions.next_state();
 
                     // Allow skipping over this token.
-                    transitions.add(prev_state_id, b, NFATransition::Empty);
+                    // If this is the last token, we can just bail out.
+                    let skip_type = if i == tokens.len() - 1 {
+                        NFATransition::SucceedImmediately
+                    } else {
+                        NFATransition::Empty
+                    };
+                    transitions.add(prev_state_id, b, skip_type);
 
                     // Allow transitioning to `a` by consuming a single character.
                     transitions.add(prev_state_id, a, NFATransition::Single);
@@ -125,7 +162,7 @@ impl NFA {
                     transitions.add(
                         prev_state_id,
                         next_state_id,
-                        NFATransition::Prefix(s.to_string()),
+                        NFATransition::Prefix(Cow::Borrowed(s)),
                     );
 
                     prev_state_id = next_state_id;
@@ -140,7 +177,6 @@ impl NFA {
     }
 
     pub fn matches(&self, s: &str) -> bool {
-        println!("Transitions: {:?}", self.transitions);
         // Holds the execution state of the NFA.
         let mut state_to_rem = vec![(self.transitions.start_state(), s)];
 
@@ -177,9 +213,13 @@ impl NFA {
                         }
 
                         NFATransition::Prefix(prefix) => {
-                            if rem.starts_with(prefix) {
+                            if rem.starts_with(prefix.deref()) {
                                 next_state_to_rem.push((next_state, &rem[prefix.len()..]));
                             }
+                        }
+
+                        NFATransition::SucceedImmediately => {
+                            return true;
                         }
                     }
                 }
@@ -192,14 +232,22 @@ impl NFA {
             state_to_rem = next_state_to_rem;
         }
     }
+
+    pub fn into_owned(self) -> NFA<'static> {
+        let transitions = self.transitions.into_owned();
+        NFA {
+            transitions,
+            end_state: self.end_state,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
-pub struct LikeMatcher {
-    nfa: NFA,
+pub struct LikeMatcher<'a> {
+    nfa: NFA<'a>,
 }
 
-impl LikeMatcher {
+impl<'a> LikeMatcher<'a> {
     pub fn new(s: &str) -> LikeMatcher {
         let tokens = lex(s);
         let nfa = NFA::from_tokens(tokens);
@@ -208,6 +256,11 @@ impl LikeMatcher {
 
     pub fn matches(&self, input: &str) -> bool {
         self.nfa.matches(input)
+    }
+
+    pub fn into_owned(self) -> LikeMatcher<'static> {
+        let nfa = self.nfa.into_owned();
+        LikeMatcher { nfa }
     }
 }
 
@@ -308,10 +361,22 @@ mod tests {
         assert!(LikeMatcher::new("'%'").matches("' 'hello' world'"));
     }
 
+    #[test]
+    fn test_owning() {
+        let s = "%hello%".to_string();
+        // This matcher depends on the string `s`.
+        let matcher = LikeMatcher::new(&s);
+        // `into_owned` should make the matcher independent of `s`, copying where necessary.
+        let matcher = matcher.into_owned();
+        // Prove that the matcher is independent of `s`. If not, this won't compile.
+        drop(s);
+        assert!(matcher.matches("hello world"));
+    }
+
     proptest! {
         #![proptest_config(ProptestConfig {
             // Generate lots of test cases.
-            cases: 1 << 3,
+            cases: 1 << 14,
             // Use small strings to explore more interesting behavior.
             max_default_size_range: 16,
             .. ProptestConfig::default()
