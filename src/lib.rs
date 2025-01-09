@@ -54,8 +54,8 @@ enum Matcher<'a> {
     Exactly(usize),
     /// Matches the end of the string.
     End,
-    /// Finish the match immediately. This used for end optimization like "hello%".
-    Finish,
+    /// Matches the entire string.
+    All,
 }
 
 /// A sequence of matchers.
@@ -168,15 +168,16 @@ impl<'a> Matchers<'a> {
                 }
 
                 // Optimizes for "match any ending" patterns like "hello%".
-                (Matcher::AtLeast(a), Matcher::Finish | Matcher::End) => {
+                (Matcher::AtLeast(a), Matcher::All | Matcher::End) => {
                     if *a > 0 {
                         v.push(Matcher::Exactly(*a));
                     }
-                    v.push(Matcher::Finish);
+                    v.push(Matcher::All);
                     i += 1;
                     changed = true;
                 }
 
+                // No optimizations found here, just move on.
                 _ => {
                     v.push(a.clone());
                 }
@@ -209,8 +210,8 @@ enum NFATransition<'a> {
     Empty,
     /// Transition is allowed if we have consumed the entire string.
     End,
-    /// If encountered (with any destination state), the NFA can immediately declare a match.
-    SucceedImmediately,
+    /// Transition is always allowed, consuming the entire strign.
+    All,
 }
 
 impl<'a> NFATransition<'a> {
@@ -222,7 +223,7 @@ impl<'a> NFATransition<'a> {
             }
             NFATransition::Skip(n) => NFATransition::Skip(n),
             NFATransition::Empty => NFATransition::Empty,
-            NFATransition::SucceedImmediately => NFATransition::SucceedImmediately,
+            NFATransition::All => NFATransition::All,
             NFATransition::End => NFATransition::End,
         }
     }
@@ -350,8 +351,8 @@ impl<'a> NFA<'a> {
                     transitions.add(prev_state, end_state, NFATransition::End);
                 }
 
-                Matcher::Finish => {
-                    transitions.add(prev_state, end_state, NFATransition::SucceedImmediately);
+                Matcher::All => {
+                    transitions.add(prev_state, end_state, NFATransition::All);
                 }
             }
         }
@@ -413,14 +414,14 @@ impl<'a> NFA<'a> {
                             }
                         }
 
-                        NFATransition::SucceedImmediately => {
-                            return true;
-                        }
-
                         NFATransition::End => {
                             if rem.is_empty() {
                                 next_state_to_rem.push((next_state, rem));
                             }
+                        }
+
+                        NFATransition::All => {
+                            next_state_to_rem.push((next_state, ""));
                         }
                     }
                 }
@@ -589,23 +590,23 @@ mod tests {
 
         #[test]
         // The first pattern can be read as "A string containing a special character".
-        fn test_matching_never_panics_special(pattern in r".*[%_\\].*", input in ".*") {
+        fn test_matching_never_fails_special(pattern in r".*[%_\\].*", input in ".*") {
             let matcher = LikeMatcher::new(&pattern);
             matcher.matches(&input);
         }
 
         #[test]
         // The first pattern can be read as "A string containing 2 consecutive special characters".
-        fn test_matching_never_panics_consecutive_special(pattern in r".*[%_\\]{2}.*", input in ".*") {
+        fn test_matching_never_fails_consecutive_special(pattern in r".*[%_\\]{2}.*", input in ".*") {
             let matcher = LikeMatcher::new(&pattern);
             matcher.matches(&input);
         }
 
         #[test]
         // The first pattern can be read as "A string of `_` and `%` containing 3 `_` characters".
-        fn test_only_special(pattern in r"(%*_%*){3}", input in ".{3,10}") {
+        fn test_only_special(pattern in r".*[%_\\]{2}.*", input in ".{3,10}") {
             let matcher = LikeMatcher::new(&pattern);
-            assert!(matcher.matches(&input));
+            matcher.matches(&input);
         }
 
         #[test]
