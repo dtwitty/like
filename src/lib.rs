@@ -143,9 +143,9 @@ impl<'a> Matchers<'a> {
 
                 // Combine "at least" and literal to make "skip to literal".
                 // This allows us to use highly-optimized substring search algorithms.
-                (Matcher::AtLeast(a), Matcher::Literal(s)) => {
+                (Matcher::AtLeast(a), Matcher::Literal(s) | Matcher::SkipToLiteral(s)) => {
                     if *a > 0 {
-                        v.push(Matcher::AtLeast(*a));
+                        v.push(Matcher::Exactly(*a));
                     }
                     v.push(Matcher::SkipToLiteral(s.clone()));
                     i += 1;
@@ -191,10 +191,11 @@ impl<'a> Matchers<'a> {
             v.push(self.matchers[i].clone());
         }
 
+        let ret = Matchers { matchers: v };
         if changed {
-            Ok(Matchers { matchers: v })
+            Ok(ret)
         } else {
-            Err(self)
+            Err(ret)
         }
     }
 }
@@ -208,8 +209,6 @@ enum NFATransition {
     SkipToSubString(Arc<Finder<'static>>),
     /// Transition is allowed if there are n characters to consume.
     Skip(usize),
-    /// Transition is always allowed, consuming no characters.
-    Empty,
     /// Transition is allowed if we have consumed the entire string.
     End,
     /// Transition is always allowed, consuming the entire strign.
@@ -274,20 +273,10 @@ impl NFA {
                     prev_state = next_state;
                 }
 
-                Matcher::AtLeast(n) => {
-                    let a = transitions.next_state();
-                    let b = transitions.next_state();
-
-                    // Allow transitioning to `a` by consuming n characters.
-                    transitions.add(prev_state, a, NFATransition::Skip(n));
-
-                    // Allow `a` to transition to itself by consuming a single character.
-                    transitions.add(a, a, NFATransition::Skip(1));
-
-                    // Allow `a` to transition to `b` t any time.
-                    transitions.add(a, b, NFATransition::Empty);
-
-                    prev_state = b;
+                // We implement this, but after optimization it would never be used.
+                // There are always more efficient ways to represent the same pattern.
+                Matcher::AtLeast(_) => {
+                    unreachable!("AtLeast matchers should be optimized away.");
                 }
 
                 Matcher::Literal(s) => {
@@ -358,11 +347,6 @@ impl NFA {
 
                 for (next_state, transition) in self.transitions.transitions(state) {
                     match transition {
-                        NFATransition::Empty => {
-                            // Transition to the next state without consuming any characters.
-                            next_state_to_rem.push((next_state, rem));
-                        }
-
                         NFATransition::Skip(n) => {
                             let (num_chars, char_bytes) =
                                 rem.chars()
@@ -539,7 +523,7 @@ mod tests {
         })]
 
         #[test]
-        fn test_matching_never_sfails(pattern in ".*", input in ".*") {
+        fn test_matching_never_fails(pattern in ".*", input in ".*") {
             let matcher = LikeMatcher::new(&pattern);
             matcher.matches(&input);
         }
