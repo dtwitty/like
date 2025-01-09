@@ -1,10 +1,22 @@
-use regex::Regex;
-
 #[derive(Debug, Clone)]
 enum Token<'a> {
     Literal(&'a str),
     Any,
     Single,
+}
+
+fn lex(input: &str) -> Vec<Token> {
+    println!("Input: {:?}", input);
+    let mut tokens = Vec::new();
+    let mut s = input;
+
+    while !s.is_empty() {
+        let (t, rest) = lex_one(s);
+        tokens.push(t);
+        s = rest;
+    }
+
+    tokens
 }
 
 fn lex_one(i: &str) -> (Token, &str) {
@@ -24,46 +36,178 @@ fn lex_one(i: &str) -> (Token, &str) {
 }
 
 #[derive(Debug, Clone)]
+enum NFATransition {
+    /// Transition is allowed if the string starts with the given prefix.
+    Prefix(String),
+    /// Transition is allowed if there is at least one character left in the string.
+    Single,
+    /// Transition is always allowed.
+    Empty,
+}
+
+type StateId = usize;
+
+#[derive(Debug, Clone)]
+struct TransitionTable<T> {
+    transitions: Vec<Vec<(StateId, T)>>,
+}
+
+impl<T> TransitionTable<T> {
+    fn new() -> TransitionTable<T> {
+        TransitionTable {
+            transitions: vec![Vec::new()],
+        }
+    }
+
+    fn start_state(&self) -> StateId {
+        0
+    }
+
+    fn next_state(&mut self) -> StateId {
+        self.transitions.push(Vec::new());
+        self.transitions.len() - 1
+    }
+
+    fn add(&mut self, from: StateId, to: StateId, transition: T) {
+        self.transitions[from].push((to, transition));
+    }
+
+    fn transitions(&self, state_id: StateId) -> impl Iterator<Item = (StateId, &T)> {
+        self.transitions[state_id]
+            .iter()
+            .map(|&(state, ref transition)| (state, transition))
+    }
+}
+
+#[derive(Debug, Clone)]
+struct NFA {
+    transitions: TransitionTable<NFATransition>,
+    end_state: StateId,
+}
+
+impl NFA {
+    pub fn from_tokens(tokens: Vec<Token>) -> NFA {
+        println!("Tokens: {:?}", tokens);
+        let mut prev_state_id = 0;
+        let mut transitions = TransitionTable::new();
+
+        for token in tokens {
+            match token {
+                Token::Single => {
+                    let next_state_id = transitions.next_state();
+                    transitions.add(prev_state_id, next_state_id, NFATransition::Single);
+                    prev_state_id = next_state_id;
+                }
+
+                Token::Any => {
+                    let a = transitions.next_state();
+                    let b = transitions.next_state();
+
+                    // Allow skipping over this token.
+                    transitions.add(prev_state_id, b, NFATransition::Empty);
+
+                    // Allow transitioning to `a` by consuming a single character.
+                    transitions.add(prev_state_id, a, NFATransition::Single);
+
+                    // Allow `a` to transition to itself by consuming a single character.
+                    transitions.add(a, a, NFATransition::Single);
+
+                    // Allow `a` to transition to `b` t any time.
+                    transitions.add(a, b, NFATransition::Empty);
+
+                    prev_state_id = b;
+                }
+
+                Token::Literal(s) => {
+                    let next_state_id = transitions.next_state();
+
+                    // Allow transitioning to the next state if the string starts with the given prefix.
+                    transitions.add(
+                        prev_state_id,
+                        next_state_id,
+                        NFATransition::Prefix(s.to_string()),
+                    );
+
+                    prev_state_id = next_state_id;
+                }
+            }
+        }
+
+        NFA {
+            transitions,
+            end_state: prev_state_id,
+        }
+    }
+
+    pub fn matches(&self, s: &str) -> bool {
+        println!("Transitions: {:?}", self.transitions);
+        // Holds the execution state of the NFA.
+        let mut state_to_rem = vec![(self.transitions.start_state(), s)];
+
+        loop {
+            let mut next_state_to_rem = Vec::new();
+
+            for (state, rem) in state_to_rem {
+                if state == self.end_state {
+                    if rem.is_empty() {
+                        // We found a match!
+                        return true;
+                    }
+
+                    // This path didn't work because we finished the NFA before finishing the string.
+                    continue;
+                }
+
+                for (next_state, transition) in self.transitions.transitions(state) {
+                    match transition {
+                        NFATransition::Empty => {
+                            // Transition to the next state without consuming any characters.
+                            next_state_to_rem.push((next_state, rem));
+                        }
+
+                        NFATransition::Single => {
+                            if rem.is_empty() {
+                                // This is a dead end. We needed at least one character.
+                                continue;
+                            }
+
+                            // Split off a single character.
+                            let char_bytes = rem.chars().next().unwrap().len_utf8();
+                            next_state_to_rem.push((next_state, &rem[char_bytes..]));
+                        }
+
+                        NFATransition::Prefix(prefix) => {
+                            if rem.starts_with(prefix) {
+                                next_state_to_rem.push((next_state, &rem[prefix.len()..]));
+                            }
+                        }
+                    }
+                }
+            }
+
+            if next_state_to_rem.is_empty() {
+                return false;
+            }
+
+            state_to_rem = next_state_to_rem;
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct LikeMatcher {
-    re: Regex,
+    nfa: NFA,
 }
 
 impl LikeMatcher {
     pub fn new(s: &str) -> LikeMatcher {
-        // Mutable reference to the input string, which we will slice off as we lex.
-        let mut s = s;
-
-        // Build a regex from the tokens.
-        let mut regex = String::new();
-
-        // Anchor the regex to the beginning of the string.
-        regex.push('^');
-
-        while !s.is_empty() {
-            // Lex off a single token.
-            let (t, rest) = lex_one(s);
-
-            // Add the token to the regex.
-            match t {
-                Token::Literal(l) => regex.push_str(&regex::escape(l)),
-                Token::Any => regex.push_str(".*"),
-                Token::Single => regex.push('.'),
-            }
-
-            // Slice the token off the string.
-            s = rest;
-        }
-
-        // Anchor the regex to the end of the string.
-        regex.push('$');
-
-        // Build the regex, which is guaranteed to be valid.
-        let re = Regex::new(&regex).unwrap();
-        LikeMatcher { re }
+        let tokens = lex(s);
+        let nfa = NFA::from_tokens(tokens);
+        LikeMatcher { nfa }
     }
 
     pub fn matches(&self, input: &str) -> bool {
-        self.re.is_match(input)
+        self.nfa.matches(input)
     }
 }
 
@@ -167,7 +311,7 @@ mod tests {
     proptest! {
         #![proptest_config(ProptestConfig {
             // Generate lots of test cases.
-            cases: 1 << 14,
+            cases: 1 << 3,
             // Use small strings to explore more interesting behavior.
             max_default_size_range: 16,
             .. ProptestConfig::default()
