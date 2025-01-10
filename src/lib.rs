@@ -78,14 +78,20 @@ enum Matcher<'a> {
     Literal(Cow<'a, str>),
     /// Consume any number of characters and match a literal.
     SkipToLiteral(Cow<'a, str>),
-    /// Matches any character, at least the given number of times.
+    /// Consume any character, at least the given number of times.
     AtLeast(usize),
-    /// Matches exactly the given number of characters.
+    /// Consume exactly the given number of characters.
     Exactly(usize),
-    /// Matches the end of the string.
+    /// Consume the end of the string.
     End,
-    /// Matches the entire string.
+    /// Consume the entire string.
     All,
+    /// Consume the entire string if it starts with the given prefix.
+    StartsWith(Cow<'a, str>),
+    /// Consume the entire string if it ends with the given suffix.
+    EndsWith(Cow<'a, str>),
+    /// Consume the entire string if it contains the given substring.
+    Contains(Cow<'a, str>),
 }
 
 /// A sequence of matchers.
@@ -124,12 +130,34 @@ impl<'a> Matchers<'a> {
         let mut v = Vec::new();
         let mut changed = false;
 
+        // Match common patterns and optimize them.
+        match self.matchers.as_slice() {
+            [Matcher::SkipToLiteral(s)] => {
+                return Ok(Matchers {
+                    matchers: vec![Matcher::EndsWith(s.clone())],
+                })
+            }
+
+            [Matcher::Literal(s), Matcher::All] => {
+                return Ok(Matchers {
+                    matchers: vec![Matcher::StartsWith(s.clone())],
+                })
+            }
+
+            [Matcher::SkipToLiteral(s), Matcher::All] => {
+                return Ok(Matchers {
+                    matchers: vec![Matcher::Contains(s.clone())],
+                })
+            }
+
+            _ => {}
+        }
+
         let mut i = 0;
         while i + 1 < self.matchers.len() {
             let a = &self.matchers[i];
             let b = &self.matchers[i + 1];
 
-            // This match block is essentially the list of optimizations.
             match (a, b) {
                 // Remove empty literals.
                 (Matcher::Literal(s), _) if s.is_empty() => {
@@ -242,6 +270,12 @@ enum NFATransition {
     End,
     /// Transition is always allowed, consuming the entire strign.
     All,
+    /// Transition is allowed if the string starts with the given prefix.
+    AllIfStartsWith(String),
+    /// Transition is allowed if the string ends with the given suffix.
+    AllIfEndsWith(String),
+    /// Transition is allowed if the string contains the given substring.
+    AllIfContains(Finder<'static>),
 }
 
 type State = usize;
@@ -350,6 +384,30 @@ impl NFA {
                 Matcher::All => {
                     transitions.add(prev_state, end_state, NFATransition::All);
                 }
+
+                Matcher::StartsWith(s) => {
+                    transitions.add(
+                        prev_state,
+                        end_state,
+                        NFATransition::AllIfStartsWith(s.into_owned()),
+                    );
+                }
+
+                Matcher::EndsWith(s) => {
+                    transitions.add(
+                        prev_state,
+                        end_state,
+                        NFATransition::AllIfEndsWith(s.into_owned()),
+                    );
+                }
+
+                Matcher::Contains(s) => {
+                    transitions.add(
+                        prev_state,
+                        end_state,
+                        NFATransition::AllIfContains(Finder::new(s.as_bytes()).into_owned()),
+                    );
+                }
             }
         }
 
@@ -411,6 +469,24 @@ impl NFA {
 
                     NFATransition::All => {
                         state_to_rem.push_back((next_state, ""));
+                    }
+
+                    NFATransition::AllIfStartsWith(prefix) => {
+                        if rem.starts_with(prefix.deref()) {
+                            state_to_rem.push_back((next_state, ""));
+                        }
+                    }
+
+                    NFATransition::AllIfEndsWith(suffix) => {
+                        if rem.ends_with(suffix.deref()) {
+                            state_to_rem.push_back((next_state, ""));
+                        }
+                    }
+
+                    NFATransition::AllIfContains(finder) => {
+                        if finder.find(rem.as_bytes()).is_some() {
+                            state_to_rem.push_back((next_state, ""));
+                        }
                     }
                 }
             }
@@ -484,7 +560,6 @@ mod tests {
         assert!(!LikeMatcher::new("_").matches("he"));
         assert!(LikeMatcher::new("_______________________").matches("aaaaaaaaaaaaaaaaaaaaaaa"));
         assert!(LikeMatcher::new("h_llo").matches("hello"));
-        assert!(!LikeMatcher::new("h_llo").matches("world"));
         assert!(!LikeMatcher::new("h_llo").matches("world"));
         assert!(LikeMatcher::new("h_llo").matches("h🔥llo"));
     }
