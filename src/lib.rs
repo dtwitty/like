@@ -2,18 +2,46 @@ use memchr::memmem::Finder;
 use std::borrow::Cow;
 use std::collections::VecDeque;
 use std::ops::Deref;
+use std::slice::Iter;
 use std::sync::Arc;
+use std::vec::IntoIter;
 
 /// A unit of a LIKE pattern.
 #[derive(Debug, Clone)]
-enum Token<'a> {
+pub enum Token<'a> {
     Literal(&'a str),
     Any,
     Single,
 }
 
+#[derive(Debug)]
+pub struct Tokens<'a> {
+    tokens: Vec<Token<'a>>,
+}
+
+pub type TokensIntoIter<'a> = IntoIter<Token<'a>>;
+impl<'a> IntoIterator for Tokens<'a> {
+    type Item = Token<'a>;
+    type IntoIter = TokensIntoIter<'a>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.tokens.into_iter()
+    }
+}
+
+type TokensIter<'a> = Iter<'a, Token<'a>>;
+
+impl<'a> IntoIterator for &'a Tokens<'a> {
+    type Item = &'a Token<'a>;
+    type IntoIter = TokensIter<'a>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.tokens.iter()
+    }
+}
+
 /// Lexes a LIKE pattern into tokens. Never fails because all strings are valid patterns.
-fn lex(input: &str) -> Vec<Token> {
+pub fn lex(input: &str) -> Tokens {
     let mut tokens = Vec::new();
     let mut s = input;
 
@@ -23,7 +51,7 @@ fn lex(input: &str) -> Vec<Token> {
         s = rest;
     }
 
-    tokens
+    Tokens { tokens }
 }
 
 /// Lexes a single token from the input. Never fails because all strings are valid patterns.
@@ -69,10 +97,10 @@ struct Matchers<'a> {
 }
 
 impl<'a> Matchers<'a> {
-    fn from_tokens(tokens: Vec<Token<'a>>) -> Matchers<'a> {
+    fn from_tokens(tokens: Tokens<'a>) -> Matchers<'a> {
         let mut v = Vec::new();
 
-        v.extend(tokens.iter().map(|token| match token {
+        v.extend(tokens.into_iter().map(|token| match token {
             Token::Literal(s) => Matcher::Literal(Cow::Borrowed(s)),
             Token::Any => Matcher::AtLeast(0),
             Token::Single => Matcher::Exactly(1),

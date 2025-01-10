@@ -8,3 +8,9 @@ memchr = "2.7.4"
 
 [dev-dependencies]
 proptest = "1.6.0"
+criterion = "0.5.1"
+regex = "1.11.1"
+
+[[bench]]
+name = "bench"
+harness = false
