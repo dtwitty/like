@@ -92,6 +92,8 @@ enum Matcher<'a> {
     EndsWith(Cow<'a, str>),
     /// Consume the entire string if it contains the given substring.
     Contains(Cow<'a, str>),
+    /// Consume the entire string if it equals the given string.
+    Equals(Cow<'a, str>),
 }
 
 /// A sequence of matchers.
@@ -129,29 +131,6 @@ impl<'a> Matchers<'a> {
     fn optimize_one(self) -> Result<Self, Self> {
         let mut v = Vec::new();
         let mut changed = false;
-
-        // Match common patterns and optimize them.
-        match self.matchers.as_slice() {
-            [Matcher::SkipToLiteral(s)] => {
-                return Ok(Matchers {
-                    matchers: vec![Matcher::EndsWith(s.clone())],
-                })
-            }
-
-            [Matcher::Literal(s), Matcher::All] => {
-                return Ok(Matchers {
-                    matchers: vec![Matcher::StartsWith(s.clone())],
-                })
-            }
-
-            [Matcher::SkipToLiteral(s), Matcher::All] => {
-                return Ok(Matchers {
-                    matchers: vec![Matcher::Contains(s.clone())],
-                })
-            }
-
-            _ => {}
-        }
 
         let mut i = 0;
         while i + 1 < self.matchers.len() {
@@ -235,6 +214,66 @@ impl<'a> Matchers<'a> {
                     changed = true;
                 }
 
+                (Matcher::AtLeast(a), Matcher::Equals(s)) => {
+                    if *a > 0 {
+                        v.push(Matcher::Exactly(*a));
+                    }
+                    v.push(Matcher::EndsWith(s.clone()));
+                    i += 1;
+                    changed = true;
+                }
+
+                (Matcher::AtLeast(a), Matcher::Contains(s)) => {
+                    if *a > 0 {
+                        v.push(Matcher::Exactly(*a));
+                    }
+                    v.push(Matcher::Contains(s.clone()));
+                    i += 1;
+                    changed = true;
+                }
+
+                (Matcher::AtLeast(a), Matcher::StartsWith(s)) => {
+                    if *a > 0 {
+                        v.push(Matcher::Exactly(*a));
+                    }
+                    v.push(Matcher::Contains(s.clone()));
+                    i += 1;
+                    changed = true;
+                }
+
+                (Matcher::AtLeast(a), Matcher::EndsWith(s)) => {
+                    if *a > 0 {
+                        v.push(Matcher::Exactly(*a));
+                    }
+                    v.push(Matcher::EndsWith(s.clone()));
+                    i += 1;
+                    changed = true;
+                }
+
+                (Matcher::Literal(s), Matcher::End) => {
+                    v.push(Matcher::Equals(s.clone()));
+                    i += 1;
+                    changed = true;
+                }
+
+                (Matcher::SkipToLiteral(s), Matcher::End) => {
+                    v.push(Matcher::EndsWith(s.clone()));
+                    i += 1;
+                    changed = true;
+                }
+
+                (Matcher::Literal(s), Matcher::All) => {
+                    v.push(Matcher::StartsWith(s.clone()));
+                    i += 1;
+                    changed = true;
+                }
+
+                (Matcher::SkipToLiteral(s), Matcher::All) => {
+                    v.push(Matcher::Contains(s.clone()));
+                    i += 1;
+                    changed = true;
+                }
+
                 // No optimizations found here, just move on.
                 _ => {
                     v.push(a.clone());
@@ -276,6 +315,8 @@ enum NFATransition {
     AllIfEndsWith(String),
     /// Transition is allowed if the string contains the given substring.
     AllIfContains(Finder<'static>),
+    /// Transition is allowed if the string equals the given string.
+    AllIfEquals(String),
 }
 
 type State = usize;
@@ -408,6 +449,14 @@ impl NFA {
                         NFATransition::AllIfContains(Finder::new(s.as_bytes()).into_owned()),
                     );
                 }
+
+                Matcher::Equals(s) => {
+                    transitions.add(
+                        prev_state,
+                        end_state,
+                        NFATransition::AllIfEquals(s.into_owned()),
+                    );
+                }
             }
         }
 
@@ -463,29 +512,35 @@ impl NFA {
 
                     NFATransition::End => {
                         if rem.is_empty() {
-                            state_to_rem.push_back((next_state, rem));
+                            return true;
                         }
                     }
 
                     NFATransition::All => {
-                        state_to_rem.push_back((next_state, ""));
+                        return true;
                     }
 
                     NFATransition::AllIfStartsWith(prefix) => {
                         if rem.starts_with(prefix.deref()) {
-                            state_to_rem.push_back((next_state, ""));
+                            return true;
                         }
                     }
 
                     NFATransition::AllIfEndsWith(suffix) => {
                         if rem.ends_with(suffix.deref()) {
-                            state_to_rem.push_back((next_state, ""));
+                            return true;
                         }
                     }
 
                     NFATransition::AllIfContains(finder) => {
                         if finder.find(rem.as_bytes()).is_some() {
-                            state_to_rem.push_back((next_state, ""));
+                            return true;
+                        }
+                    }
+
+                    NFATransition::AllIfEquals(s) => {
+                        if rem == s {
+                            return true;
                         }
                     }
                 }
