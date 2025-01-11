@@ -129,6 +129,7 @@ impl<'a> Matchers<'a> {
     }
 
     fn optimize_one(self) -> Result<Self, Self> {
+        use Matcher::*;
         let mut v = Vec::new();
         let mut changed = false;
 
@@ -139,144 +140,201 @@ impl<'a> Matchers<'a> {
 
             match (a, b) {
                 // Remove empty literals.
-                (Matcher::Literal(s), _) if s.is_empty() => {
+                (Literal(s), _) if s.is_empty() => {
                     i += 1;
                     changed = true;
                 }
 
                 // Remove empty character counters.
-                (Matcher::Exactly(0), _) => {
+                (Exactly(0), _) => {
                     i += 1;
                     changed = true;
                 }
 
                 // Remove empty "skip to literal".
-                (Matcher::SkipToLiteral(s), _) if s.is_empty() => {
+                (SkipToLiteral(s), _) if s.is_empty() => {
                     i += 1;
                     changed = true;
                 }
 
                 // Combine adjacent literals.
                 // Escaping can cause literals to be split during lexing.
-                (Matcher::Literal(ref a), Matcher::Literal(ref b)) => {
+                (Literal(ref a), Literal(ref b)) => {
                     let a = a.clone();
                     let b = b.clone();
                     let c = Cow::Owned(a.to_string() + b.deref());
-                    v.push(Matcher::Literal(c));
+                    v.push(Literal(c));
                     i += 1;
                     changed = true;
                 }
 
                 // Combine adjacent "skip to literal" and literal.
-                (Matcher::SkipToLiteral(ref a), Matcher::Literal(ref b)) => {
+                (SkipToLiteral(ref a), Literal(ref b)) => {
                     let a = a.clone();
                     let b = b.clone();
                     let c = Cow::Owned(a.to_string() + b.deref());
-                    v.push(Matcher::SkipToLiteral(c));
+                    v.push(SkipToLiteral(c));
                     i += 1;
                     changed = true;
                 }
 
                 // Combine "at least" and literal to make "skip to literal".
                 // This allows us to use highly-optimized substring search algorithms.
-                (Matcher::AtLeast(a), Matcher::Literal(s) | Matcher::SkipToLiteral(s)) => {
+                (AtLeast(a), Literal(s) | SkipToLiteral(s)) => {
                     if *a > 0 {
-                        v.push(Matcher::Exactly(*a));
+                        v.push(Exactly(*a));
                     }
-                    v.push(Matcher::SkipToLiteral(s.clone()));
+                    v.push(SkipToLiteral(s.clone()));
                     i += 1;
                     changed = true;
                 }
 
                 // Combine character counters like "___" into a single matcher.
-                (Matcher::Exactly(a), Matcher::Exactly(b)) => {
-                    v.push(Matcher::Exactly(a + b));
+                (Exactly(a), Exactly(b)) => {
+                    v.push(Exactly(a + b));
                     i += 1;
                     changed = true;
                 }
 
                 // Combine any combination of "at least" and "exactly" counters.
-                (Matcher::AtLeast(a), Matcher::Exactly(b))
-                | (Matcher::AtLeast(a), Matcher::AtLeast(b))
-                | (Matcher::Exactly(b), Matcher::AtLeast(a)) => {
-                    v.push(Matcher::AtLeast(a + b));
+                (AtLeast(a), Exactly(b)) | (AtLeast(a), AtLeast(b)) | (Exactly(b), AtLeast(a)) => {
+                    v.push(AtLeast(a + b));
                     i += 1;
                     changed = true;
                 }
 
                 // Optimizes for "match any ending" patterns like "hello%".
-                (Matcher::AtLeast(a), Matcher::All | Matcher::End) => {
+                (AtLeast(a), All | End) => {
                     if *a > 0 {
-                        v.push(Matcher::Exactly(*a));
+                        v.push(Exactly(*a));
                     }
-                    v.push(Matcher::All);
+                    v.push(All);
                     i += 1;
                     changed = true;
                 }
 
-                (Matcher::AtLeast(a), Matcher::Equals(s)) => {
+                (AtLeast(a), Equals(s)) => {
                     if *a > 0 {
-                        v.push(Matcher::Exactly(*a));
+                        v.push(Exactly(*a));
                     }
-                    v.push(Matcher::EndsWith(s.clone()));
+                    v.push(EndsWith(s.clone()));
                     i += 1;
                     changed = true;
                 }
 
-                (Matcher::AtLeast(a), Matcher::Contains(s)) => {
+                (AtLeast(a), Contains(s)) => {
                     if *a > 0 {
-                        v.push(Matcher::Exactly(*a));
+                        v.push(Exactly(*a));
                     }
-                    v.push(Matcher::Contains(s.clone()));
+                    v.push(Contains(s.clone()));
                     i += 1;
                     changed = true;
                 }
 
-                (Matcher::AtLeast(a), Matcher::StartsWith(s)) => {
+                (AtLeast(a), StartsWith(s)) => {
                     if *a > 0 {
-                        v.push(Matcher::Exactly(*a));
+                        v.push(Exactly(*a));
                     }
-                    v.push(Matcher::Contains(s.clone()));
+                    v.push(Contains(s.clone()));
                     i += 1;
                     changed = true;
                 }
 
-                (Matcher::AtLeast(a), Matcher::EndsWith(s)) => {
+                (AtLeast(a), EndsWith(s)) => {
                     if *a > 0 {
-                        v.push(Matcher::Exactly(*a));
+                        v.push(Exactly(*a));
                     }
-                    v.push(Matcher::EndsWith(s.clone()));
+                    v.push(EndsWith(s.clone()));
                     i += 1;
                     changed = true;
                 }
 
-                (Matcher::Literal(s), Matcher::End) => {
-                    v.push(Matcher::Equals(s.clone()));
+                (Literal(s), End) => {
+                    v.push(Equals(s.clone()));
                     i += 1;
                     changed = true;
                 }
 
-                (Matcher::SkipToLiteral(s), Matcher::End) => {
-                    v.push(Matcher::EndsWith(s.clone()));
+                (SkipToLiteral(s), End) => {
+                    v.push(EndsWith(s.clone()));
                     i += 1;
                     changed = true;
                 }
 
-                (Matcher::Literal(s), Matcher::All) => {
-                    v.push(Matcher::StartsWith(s.clone()));
+                (Literal(s), All) => {
+                    v.push(StartsWith(s.clone()));
                     i += 1;
                     changed = true;
                 }
 
-                (Matcher::SkipToLiteral(s), Matcher::All) => {
-                    v.push(Matcher::Contains(s.clone()));
+                (SkipToLiteral(s), All) => {
+                    v.push(Contains(s.clone()));
                     i += 1;
                     changed = true;
                 }
 
-                // No optimizations found here, just move on.
-                _ => {
-                    v.push(a.clone());
+                (Literal(a), StartsWith(b)) => {
+                    v.push(StartsWith(Cow::Owned(a.to_string() + b.deref())));
+                    i += 1;
+                    changed = true;
+                }
+
+                (Literal(a), Equals(b)) => {
+                    v.push(Equals(Cow::Owned(a.to_string() + b.deref())));
+                    i += 1;
+                    changed = true;
+                }
+
+                (SkipToLiteral(a), StartsWith(b)) => {
+                    v.push(Contains(Cow::Owned(a.to_string() + b.deref())));
+                    i += 1;
+                    changed = true;
+                }
+
+                (SkipToLiteral(a), Equals(b)) => {
+                    v.push(EndsWith(Cow::Owned(a.to_string() + b.deref())));
+                    i += 1;
+                    changed = true;
+                }
+
+                (Literal(_), SkipToLiteral(_)) => { v.push(a.clone()); }
+
+                (Literal(_), AtLeast(_)) => { v.push(a.clone()); }
+
+                (Literal(_), Exactly(_)) => { v.push(a.clone()); }
+
+                (Literal(_), EndsWith(_)) => { v.push(a.clone()); }
+
+                (Literal(_), Contains(_)) => { v.push(a.clone()); }
+
+                (SkipToLiteral(_), SkipToLiteral(_)) => { v.push(a.clone()); }
+
+                (SkipToLiteral(_), AtLeast(_)) => { v.push(a.clone()); }
+
+                (SkipToLiteral(_), Exactly(_)) => { v.push(a.clone()); }
+
+                (SkipToLiteral(_), EndsWith(_)) => { v.push(a.clone()); }
+
+                (SkipToLiteral(_), Contains(_)) => { v.push(a.clone()); }
+
+                (Exactly(_), Literal(_)) => { v.push(a.clone()); }
+
+                (Exactly(_), SkipToLiteral(_)) => { v.push(a.clone()); }
+
+                (Exactly(_), End) => { v.push(a.clone()); }
+
+                (Exactly(_), All) => { v.push(a.clone()); }
+
+                (Exactly(_), StartsWith(_)) => { v.push(a.clone()); }
+
+                (Exactly(_), EndsWith(_)) => { v.push(a.clone()); }
+
+                (Exactly(_), Contains(_)) => { v.push(a.clone()); }
+
+                (Exactly(_), Equals(_)) => { v.push(a.clone()); }
+
+                (End | All | StartsWith(_) | EndsWith(_) | Contains(_) | Equals(_), _) => {
+                    unreachable!("{:?} should always be the last matcher", a);
                 }
             }
 
