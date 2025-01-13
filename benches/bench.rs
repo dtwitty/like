@@ -1,7 +1,8 @@
 #![allow(unused)]
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use like::{lex, LikeMatcher};
+use like::tokens::Token::*;
+use like::{tokens::lex, LikeMatcher};
 use std::collections::BTreeSet;
 
 struct RegexLikeMatcher {
@@ -15,9 +16,9 @@ impl RegexLikeMatcher {
         re.push('^');
         for token in tokens {
             match token {
-                like::Token::Any => re.push_str(".*"),
-                like::Token::Single => re.push_str("."),
-                like::Token::Literal(lit) => re.push_str(&regex::escape(lit)),
+                Any => re.push_str(".*"),
+                Single => re.push_str("."),
+                Literal(lit) => re.push_str(&regex::escape(lit)),
             }
         }
         re.push('$');
