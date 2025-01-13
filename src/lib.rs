@@ -1,4 +1,6 @@
+use bit_set::BitSet;
 use memchr::memmem::Finder;
+use rustc_hash::FxHashMap;
 use std::borrow::Cow;
 use std::collections::VecDeque;
 use std::ops::Deref;
@@ -391,7 +393,7 @@ impl<'a> Matchers<'a> {
 }
 
 #[derive(Debug, Clone)]
-enum NFATransition {
+enum Transition {
     /// Transition is allowed if we can consume the given prefix.
     Prefix(String),
     /// Transition is allowed if we can skip to and consume the given substring.
@@ -417,7 +419,7 @@ type State = usize;
 
 #[derive(Debug, Clone)]
 struct TransitionTable {
-    transitions: Vec<Vec<(State, NFATransition)>>,
+    transitions: Vec<Vec<(State, Transition)>>,
 }
 
 impl TransitionTable {
@@ -437,11 +439,11 @@ impl TransitionTable {
         self.transitions.len() - 1
     }
 
-    fn add(&mut self, from: State, to: State, transition: NFATransition) {
+    fn add(&mut self, from: State, to: State, transition: Transition) {
         self.transitions[from].push((to, transition));
     }
 
-    fn transitions(&self, state: State) -> impl Iterator<Item = (State, &NFATransition)> {
+    fn transitions(&self, state: State) -> impl Iterator<Item = (State, &Transition)> {
         self.transitions[state]
             .iter()
             .map(|&(state, ref transition)| (state, transition))
@@ -462,7 +464,7 @@ impl NFA {
             match matcher {
                 Matcher::Exactly(n) => {
                     let next_state = transitions.next_state();
-                    transitions.add(prev_state, next_state, NFATransition::Skip(n));
+                    transitions.add(prev_state, next_state, Transition::Skip(n));
                     prev_state = next_state;
                 }
 
@@ -476,11 +478,7 @@ impl NFA {
                     let next_state = transitions.next_state();
 
                     // Allow transitioning to the next state if the string starts with the given prefix.
-                    transitions.add(
-                        prev_state,
-                        next_state,
-                        NFATransition::Prefix(s.into_owned()),
-                    );
+                    transitions.add(prev_state, next_state, Transition::Prefix(s.into_owned()));
 
                     prev_state = next_state;
                 }
@@ -494,32 +492,28 @@ impl NFA {
                     transitions.add(
                         prev_state,
                         next_state,
-                        NFATransition::SkipToSubString(finder.clone()),
+                        Transition::SkipToSubString(finder.clone()),
                     );
 
                     // Allow trying to skip again by transitioning to the same state.
-                    transitions.add(
-                        next_state,
-                        next_state,
-                        NFATransition::SkipToSubString(finder),
-                    );
+                    transitions.add(next_state, next_state, Transition::SkipToSubString(finder));
 
                     prev_state = next_state;
                 }
 
                 Matcher::End => {
-                    transitions.add(prev_state, prev_state, NFATransition::End);
+                    transitions.add(prev_state, prev_state, Transition::End);
                 }
 
                 Matcher::All => {
-                    transitions.add(prev_state, prev_state, NFATransition::All);
+                    transitions.add(prev_state, prev_state, Transition::All);
                 }
 
                 Matcher::StartsWith(s) => {
                     transitions.add(
                         prev_state,
                         prev_state,
-                        NFATransition::AllIfStartsWith(s.into_owned()),
+                        Transition::AllIfStartsWith(s.into_owned()),
                     );
                 }
 
@@ -527,7 +521,7 @@ impl NFA {
                     transitions.add(
                         prev_state,
                         prev_state,
-                        NFATransition::AllIfEndsWith(s.into_owned()),
+                        Transition::AllIfEndsWith(s.into_owned()),
                     );
                 }
 
@@ -535,7 +529,7 @@ impl NFA {
                     transitions.add(
                         prev_state,
                         prev_state,
-                        NFATransition::AllIfContains(Finder::new(s.as_bytes()).into_owned()),
+                        Transition::AllIfContains(Finder::new(s.as_bytes()).into_owned()),
                     );
                 }
 
@@ -543,7 +537,7 @@ impl NFA {
                     transitions.add(
                         prev_state,
                         prev_state,
-                        NFATransition::AllIfEquals(s.into_owned()),
+                        Transition::AllIfEquals(s.into_owned()),
                     );
                 }
             }
@@ -560,7 +554,7 @@ impl NFA {
         while let Some((state, rem)) = state_to_rem.pop_front() {
             for (next_state, transition) in self.transitions.transitions(state) {
                 match transition {
-                    NFATransition::Skip(n) => {
+                    Transition::Skip(n) => {
                         let (num_chars, char_bytes) = rem
                             .chars()
                             .take(*n)
@@ -576,48 +570,48 @@ impl NFA {
                         state_to_rem.push_back((next_state, &rem[char_bytes..]));
                     }
 
-                    NFATransition::Prefix(prefix) => {
+                    Transition::Prefix(prefix) => {
                         if rem.starts_with(prefix.deref()) {
                             state_to_rem.push_back((next_state, &rem[prefix.len()..]));
                         }
                     }
 
-                    NFATransition::SkipToSubString(finder) => {
+                    Transition::SkipToSubString(finder) => {
                         if let Some(pos) = finder.find(rem.as_bytes()) {
                             let consumed_bytes = pos + finder.needle().len();
                             state_to_rem.push_back((next_state, &rem[consumed_bytes..]));
                         }
                     }
 
-                    NFATransition::End => {
+                    Transition::End => {
                         if rem.is_empty() {
                             return true;
                         }
                     }
 
-                    NFATransition::All => {
+                    Transition::All => {
                         return true;
                     }
 
-                    NFATransition::AllIfStartsWith(prefix) => {
+                    Transition::AllIfStartsWith(prefix) => {
                         if rem.starts_with(prefix.deref()) {
                             return true;
                         }
                     }
 
-                    NFATransition::AllIfEndsWith(suffix) => {
+                    Transition::AllIfEndsWith(suffix) => {
                         if rem.ends_with(suffix.deref()) {
                             return true;
                         }
                     }
 
-                    NFATransition::AllIfContains(finder) => {
+                    Transition::AllIfContains(finder) => {
                         if finder.find(rem.as_bytes()).is_some() {
                             return true;
                         }
                     }
 
-                    NFATransition::AllIfEquals(s) => {
+                    Transition::AllIfEquals(s) => {
                         if rem == s {
                             return true;
                         }
@@ -627,6 +621,112 @@ impl NFA {
         }
 
         false
+    }
+}
+
+#[derive(Debug, Clone)]
+struct DFA {
+    transitions: Vec<(Transition, State)>,
+}
+
+impl DFA {
+    fn from_nfa(nfa: NFA) -> Self {
+        let mut transitions = FxHashMap::default();
+        let curr_state = BitSet::from_iter([nfa.transitions.start_state()]);
+
+        loop {
+            for state in curr_state.iter() {
+                for (next_state, transition) in nfa.transitions.transitions(state) {
+                    transitions
+                        .entry(state.clone())
+                        .or_insert_with(|| FxHashMap::default())
+                        .entry(transition)
+                        .or_insert_with(|| BitSet::new())
+                        .insert(next_state);
+                }
+            }
+        }
+    }
+
+    fn start_state(&self) -> State {
+        0
+    }
+
+    fn end_state(&self) -> State {
+        1
+    }
+
+    fn matches(&self, s: &str) -> bool {
+        let mut state = self.start_state();
+        let mut rem = s;
+        loop {
+            if state == self.end_state() {
+                return rem.is_empty();
+            }
+
+            let (transition, next_state) = &self.transitions[state];
+            match transition {
+                Transition::Skip(n) => {
+                    let (num_chars, char_bytes) = rem
+                        .chars()
+                        .take(*n)
+                        .fold((0, 0), |(num_chars, char_bytes), c| {
+                            (num_chars + 1, char_bytes + c.len_utf8())
+                        });
+
+                    if num_chars < *n {
+                        // We can't skip this many characters.
+                        return false;
+                    }
+
+                    state = *next_state;
+                    rem = &rem[char_bytes..];
+                }
+
+                Transition::Prefix(prefix) => {
+                    if !rem.starts_with(prefix.deref()) {
+                        return false;
+                    }
+
+                    state = *next_state;
+                    rem = &rem[prefix.len()..];
+                }
+
+                Transition::SkipToSubString(finder) => {
+                    if let Some(pos) = finder.find(rem.as_bytes()) {
+                        let consumed_bytes = pos + finder.needle().len();
+                        state = *next_state;
+                        rem = &rem[consumed_bytes..];
+                    } else {
+                        return false;
+                    }
+                }
+
+                Transition::End => {
+                    return rem.is_empty();
+                }
+
+                Transition::All => {
+                    return true;
+                }
+
+                Transition::AllIfStartsWith(prefix) => {
+                    return rem.starts_with(prefix.deref());
+                }
+
+                Transition::AllIfEndsWith(suffix) => {
+                    return rem.ends_with(suffix.deref());
+                }
+
+                Transition::AllIfContains(finder) => {
+                    return finder.find(rem.as_bytes()).is_some();
+                }
+
+                Transition::AllIfEquals(s) => {
+                    return rem == s;
+                }
+            }
+        }
     }
 }
 
