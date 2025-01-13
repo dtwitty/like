@@ -297,41 +297,77 @@ impl<'a> Matchers<'a> {
                     changed = true;
                 }
 
-                (Literal(_), SkipToLiteral(_)) => { v.push(a.clone()); }
+                (Literal(_), SkipToLiteral(_)) => {
+                    v.push(a.clone());
+                }
 
-                (Literal(_), AtLeast(_)) => { v.push(a.clone()); }
+                (Literal(_), AtLeast(_)) => {
+                    v.push(a.clone());
+                }
 
-                (Literal(_), Exactly(_)) => { v.push(a.clone()); }
+                (Literal(_), Exactly(_)) => {
+                    v.push(a.clone());
+                }
 
-                (Literal(_), EndsWith(_)) => { v.push(a.clone()); }
+                (Literal(_), EndsWith(_)) => {
+                    v.push(a.clone());
+                }
 
-                (Literal(_), Contains(_)) => { v.push(a.clone()); }
+                (Literal(_), Contains(_)) => {
+                    v.push(a.clone());
+                }
 
-                (SkipToLiteral(_), SkipToLiteral(_)) => { v.push(a.clone()); }
+                (SkipToLiteral(_), SkipToLiteral(_)) => {
+                    v.push(a.clone());
+                }
 
-                (SkipToLiteral(_), AtLeast(_)) => { v.push(a.clone()); }
+                (SkipToLiteral(_), AtLeast(_)) => {
+                    v.push(a.clone());
+                }
 
-                (SkipToLiteral(_), Exactly(_)) => { v.push(a.clone()); }
+                (SkipToLiteral(_), Exactly(_)) => {
+                    v.push(a.clone());
+                }
 
-                (SkipToLiteral(_), EndsWith(_)) => { v.push(a.clone()); }
+                (SkipToLiteral(_), EndsWith(_)) => {
+                    v.push(a.clone());
+                }
 
-                (SkipToLiteral(_), Contains(_)) => { v.push(a.clone()); }
+                (SkipToLiteral(_), Contains(_)) => {
+                    v.push(a.clone());
+                }
 
-                (Exactly(_), Literal(_)) => { v.push(a.clone()); }
+                (Exactly(_), Literal(_)) => {
+                    v.push(a.clone());
+                }
 
-                (Exactly(_), SkipToLiteral(_)) => { v.push(a.clone()); }
+                (Exactly(_), SkipToLiteral(_)) => {
+                    v.push(a.clone());
+                }
 
-                (Exactly(_), End) => { v.push(a.clone()); }
+                (Exactly(_), End) => {
+                    v.push(a.clone());
+                }
 
-                (Exactly(_), All) => { v.push(a.clone()); }
+                (Exactly(_), All) => {
+                    v.push(a.clone());
+                }
 
-                (Exactly(_), StartsWith(_)) => { v.push(a.clone()); }
+                (Exactly(_), StartsWith(_)) => {
+                    v.push(a.clone());
+                }
 
-                (Exactly(_), EndsWith(_)) => { v.push(a.clone()); }
+                (Exactly(_), EndsWith(_)) => {
+                    v.push(a.clone());
+                }
 
-                (Exactly(_), Contains(_)) => { v.push(a.clone()); }
+                (Exactly(_), Contains(_)) => {
+                    v.push(a.clone());
+                }
 
-                (Exactly(_), Equals(_)) => { v.push(a.clone()); }
+                (Exactly(_), Equals(_)) => {
+                    v.push(a.clone());
+                }
 
                 (End | All | StartsWith(_) | EndsWith(_) | Contains(_) | Equals(_), _) => {
                     unreachable!("{:?} should always be the last matcher", a);
@@ -396,10 +432,6 @@ impl TransitionTable {
         0
     }
 
-    fn end_state(&self) -> State {
-        1
-    }
-
     fn next_state(&mut self) -> State {
         self.transitions.push(Vec::new());
         self.transitions.len() - 1
@@ -425,7 +457,6 @@ impl NFA {
     pub fn from_matchers(matchers: Matchers) -> NFA {
         let mut transitions = TransitionTable::new();
         let mut prev_state = transitions.start_state();
-        let end_state = transitions.end_state();
 
         for matcher in matchers.matchers {
             match matcher {
@@ -477,17 +508,17 @@ impl NFA {
                 }
 
                 Matcher::End => {
-                    transitions.add(prev_state, end_state, NFATransition::End);
+                    transitions.add(prev_state, prev_state, NFATransition::End);
                 }
 
                 Matcher::All => {
-                    transitions.add(prev_state, end_state, NFATransition::All);
+                    transitions.add(prev_state, prev_state, NFATransition::All);
                 }
 
                 Matcher::StartsWith(s) => {
                     transitions.add(
                         prev_state,
-                        end_state,
+                        prev_state,
                         NFATransition::AllIfStartsWith(s.into_owned()),
                     );
                 }
@@ -495,7 +526,7 @@ impl NFA {
                 Matcher::EndsWith(s) => {
                     transitions.add(
                         prev_state,
-                        end_state,
+                        prev_state,
                         NFATransition::AllIfEndsWith(s.into_owned()),
                     );
                 }
@@ -503,7 +534,7 @@ impl NFA {
                 Matcher::Contains(s) => {
                     transitions.add(
                         prev_state,
-                        end_state,
+                        prev_state,
                         NFATransition::AllIfContains(Finder::new(s.as_bytes()).into_owned()),
                     );
                 }
@@ -511,7 +542,7 @@ impl NFA {
                 Matcher::Equals(s) => {
                     transitions.add(
                         prev_state,
-                        end_state,
+                        prev_state,
                         NFATransition::AllIfEquals(s.into_owned()),
                     );
                 }
@@ -527,16 +558,6 @@ impl NFA {
         state_to_rem.push_back((self.transitions.start_state(), s));
 
         while let Some((state, rem)) = state_to_rem.pop_front() {
-            if state == self.transitions.end_state() {
-                if rem.is_empty() {
-                    // We found a match!
-                    return true;
-                }
-
-                // This path didn't work because we finished the NFA before finishing the string.
-                continue;
-            }
-
             for (next_state, transition) in self.transitions.transitions(state) {
                 match transition {
                     NFATransition::Skip(n) => {
