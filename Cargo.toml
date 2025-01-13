@@ -3,11 +3,19 @@ name = "like"
 version = "0.1.0"
 edition = "2021"
 
+[lib]
+name = "like"
+path = "src/lib.rs"
+
+[[bin]]
+name = "profile"
+path = "src/bin/profile.rs"
+
 [dependencies]
 bit-set = "0.8.0"
-itertools = "0.14.0"
 memchr = "2.7.4"
 rustc-hash = "2.1.0"
+clap = { version = "4.5.18", features = ["derive"] }
 
 [dev-dependencies]
 proptest = "1.6.0"
@@ -17,3 +25,7 @@ regex = "1.11.1"
 [[bench]]
 name = "bench"
 harness = false
+
+[profile.release]
+debug = true
+
