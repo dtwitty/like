@@ -1,8 +1,11 @@
 use bit_set::BitSet;
+use itertools::Itertools;
 use memchr::memmem::Finder;
 use rustc_hash::FxHashMap;
 use std::borrow::Cow;
+use std::cmp::Ordering;
 use std::collections::VecDeque;
+use std::hash::{Hash, Hasher};
 use std::ops::Deref;
 use std::slice::Iter;
 use std::sync::Arc;
@@ -415,6 +418,117 @@ enum Transition {
     AllIfEquals(String),
 }
 
+impl Hash for Transition {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        match self {
+            Transition::Prefix(s) => {
+                state.write_u8(0);
+                s.hash(state);
+            }
+
+            Transition::SkipToSubString(finder) => {
+                state.write_u8(1);
+                finder.needle().hash(state);
+            }
+
+            Transition::Skip(n) => {
+                state.write_u8(2);
+                n.hash(state);
+            }
+
+            Transition::End => {
+                state.write_u8(3);
+            }
+
+            Transition::All => {
+                state.write_u8(4);
+            }
+
+            Transition::AllIfStartsWith(s) => {
+                state.write_u8(5);
+                s.hash(state);
+            }
+
+            Transition::AllIfEndsWith(s) => {
+                state.write_u8(6);
+                s.hash(state);
+            }
+
+            Transition::AllIfContains(finder) => {
+                state.write_u8(7);
+                finder.needle().hash(state);
+            }
+
+            Transition::AllIfEquals(s) => {
+                state.write_u8(8);
+                s.hash(state);
+            }
+        }
+    }
+}
+
+impl PartialEq<Transition> for Transition {
+    fn eq(&self, other: &Transition) -> bool {
+        match (self, other) {
+            (Transition::Prefix(a), Transition::Prefix(b)) => a == b,
+            (Transition::SkipToSubString(a), Transition::SkipToSubString(b)) => {
+                a.needle() == b.needle()
+            }
+            (Transition::Skip(a), Transition::Skip(b)) => a == b,
+            (Transition::End, Transition::End) => true,
+            (Transition::All, Transition::All) => true,
+            (Transition::AllIfStartsWith(a), Transition::AllIfStartsWith(b)) => a == b,
+            (Transition::AllIfEndsWith(a), Transition::AllIfEndsWith(b)) => a == b,
+            (Transition::AllIfContains(a), Transition::AllIfContains(b)) => {
+                a.needle() == b.needle()
+            }
+            (Transition::AllIfEquals(a), Transition::AllIfEquals(b)) => a == b,
+            _ => false,
+        }
+    }
+}
+
+// This defines the precedence of transitions.
+impl PartialOrd<Transition> for Transition {
+    fn partial_cmp(&self, other: &Transition) -> Option<Ordering> {
+        match (self, other) {
+            (Transition::All, _) => Some(Ordering::Less),
+            (_, Transition::All) => Some(Ordering::Greater),
+
+            (Transition::AllIfStartsWith(_), _) => Some(Ordering::Less),
+            (_, Transition::AllIfStartsWith(_)) => Some(Ordering::Greater),
+
+            (Transition::AllIfEndsWith(_), _) => Some(Ordering::Less),
+            (_, Transition::AllIfEndsWith(_)) => Some(Ordering::Greater),
+
+            (Transition::AllIfContains(_), _) => Some(Ordering::Less),
+            (_, Transition::AllIfContains(_)) => Some(Ordering::Greater),
+
+            (Transition::AllIfEquals(_), _) => Some(Ordering::Less),
+            (_, Transition::AllIfEquals(_)) => Some(Ordering::Greater),
+
+            (Transition::End, _) => Some(Ordering::Less),
+            (_, Transition::End) => Some(Ordering::Greater),
+
+            (Transition::Skip(_), _) => Some(Ordering::Less),
+            (_, Transition::Skip(_)) => Some(Ordering::Greater),
+
+            (Transition::SkipToSubString(_), _) => Some(Ordering::Less),
+            (_, Transition::SkipToSubString(_)) => Some(Ordering::Greater),
+
+            (Transition::Prefix(_), _) => Some(Ordering::Less),
+        }
+    }
+}
+
+impl Ord for Transition {
+    fn cmp(&self, other: &Transition) -> Ordering {
+        self.partial_cmp(other).unwrap()
+    }
+}
+
+impl Eq for Transition {}
+
 type State = usize;
 
 #[derive(Debug, Clone)]
@@ -545,15 +659,120 @@ impl NFA {
 
         NFA { transitions }
     }
+}
 
-    pub fn matches(&self, s: &str) -> bool {
-        // Holds the execution state of the NFA.
-        let mut state_to_rem = VecDeque::new();
-        state_to_rem.push_back((self.transitions.start_state(), s));
+#[derive(Debug, Clone)]
+struct DFA {
+    transitions: Vec<Vec<(Transition, State)>>,
+}
 
-        while let Some((state, rem)) = state_to_rem.pop_front() {
-            for (next_state, transition) in self.transitions.transitions(state) {
+type DFABuilderState = BitSet;
+
+impl DFA {
+    fn from_nfa(nfa: NFA) -> Self {
+        // Holds the transitions of the DFA.
+        // We will later translate this to an optimized form for fast matching.
+        let mut transition_map = FxHashMap::default();
+
+        // This is the start state of the DFA.
+        let dfa_start_state = DFABuilderState::from_iter([nfa.transitions.start_state()]);
+
+        // This machinery helps us traverse the DFA, ensuring we don't visit the same state twice.
+        let mut q = VecDeque::from([dfa_start_state.clone()]);
+        let mut num_states_visited = 0;
+        let mut visit_order = FxHashMap::default();
+
+        // Traverse the DFA using BFS.
+        while let Some(curr_dfa_state) = q.pop_front() {
+            // Check whether we have visited this state before.
+            if visit_order.contains_key(&curr_dfa_state) {
+                continue;
+            }
+            visit_order.insert(curr_dfa_state.clone(), num_states_visited);
+            num_states_visited += 1;
+
+            // Build up a map from transitions to the next (NFA) state sets.
+            let mut local_transitions = FxHashMap::default();
+            for curr_nfa_state in curr_dfa_state.iter() {
+                for (next_nfa_state, transition) in nfa.transitions.transitions(curr_nfa_state) {
+                    local_transitions
+                        .entry(transition)
+                        .or_insert_with(|| BitSet::new())
+                        .insert(next_nfa_state);
+                }
+            }
+
+            // Continue the traversal by adding next states to the queue.
+            for next_dfa_state in local_transitions.values() {
+                q.push_back(next_dfa_state.clone());
+            }
+
+            // Record the outcome for the current DFA state.
+            transition_map.insert(
+                curr_dfa_state.clone(),
+                local_transitions.into_iter().collect::<Vec<_>>(),
+            );
+        }
+
+        // We have converted the NFA to a DFA! Now we need to optimize it.
+        // Make sure the DFA start state gets assigned to 0.
+        let order_to_state = visit_order
+            .iter()
+            .map(|(state, order)| (*order, state.clone()))
+            .sorted()
+            .collect::<FxHashMap<_, _>>();
+        let mut transitions = Vec::new();
+        for i in 0..num_states_visited {
+            let dfa_state = order_to_state[&i].clone();
+            let mut t = Vec::new();
+            for (transition, next_state) in transition_map
+                .remove(&dfa_state)
+                .unwrap()
+                .into_iter()
+                .sorted()
+            {
+                let next_order = visit_order[&next_state];
+                t.push((transition.clone(), next_order));
+            }
+            transitions.push(t);
+        }
+        DFA { transitions }
+    }
+
+    fn start_state(&self) -> State {
+        0
+    }
+
+    fn matches(&self, s: &str) -> bool {
+        let mut state = self.start_state();
+        let mut rem = s;
+        loop {
+            for (transition, next_state) in &self.transitions[state] {
                 match transition {
+                    Transition::End => {
+                        return rem.is_empty();
+                    }
+
+                    Transition::All => {
+                        return true;
+                    }
+
+                    Transition::AllIfStartsWith(prefix) => {
+                        return rem.starts_with(prefix.deref());
+                    }
+
+                    Transition::AllIfEndsWith(suffix) => {
+                        return rem.ends_with(suffix.deref());
+                    }
+
+                    Transition::AllIfContains(finder) => {
+                        return finder.find(rem.as_bytes()).is_some();
+                    }
+
+                    Transition::AllIfEquals(s) => {
+                        return rem == s;
+                    }
+
                     Transition::Skip(n) => {
                         let (num_chars, char_bytes) = rem
                             .chars()
@@ -564,166 +783,31 @@ impl NFA {
 
                         if num_chars < *n {
                             // We can't skip this many characters.
-                            continue;
+                            return false;
                         }
 
-                        state_to_rem.push_back((next_state, &rem[char_bytes..]));
+                        state = *next_state;
+                        rem = &rem[char_bytes..];
                     }
 
                     Transition::Prefix(prefix) => {
-                        if rem.starts_with(prefix.deref()) {
-                            state_to_rem.push_back((next_state, &rem[prefix.len()..]));
+                        if !rem.starts_with(prefix.deref()) {
+                            return false;
                         }
+
+                        state = *next_state;
+                        rem = &rem[prefix.len()..];
                     }
 
                     Transition::SkipToSubString(finder) => {
                         if let Some(pos) = finder.find(rem.as_bytes()) {
                             let consumed_bytes = pos + finder.needle().len();
-                            state_to_rem.push_back((next_state, &rem[consumed_bytes..]));
+                            state = *next_state;
+                            rem = &rem[consumed_bytes..];
+                        } else {
+                            return false;
                         }
                     }
-
-                    Transition::End => {
-                        if rem.is_empty() {
-                            return true;
-                        }
-                    }
-
-                    Transition::All => {
-                        return true;
-                    }
-
-                    Transition::AllIfStartsWith(prefix) => {
-                        if rem.starts_with(prefix.deref()) {
-                            return true;
-                        }
-                    }
-
-                    Transition::AllIfEndsWith(suffix) => {
-                        if rem.ends_with(suffix.deref()) {
-                            return true;
-                        }
-                    }
-
-                    Transition::AllIfContains(finder) => {
-                        if finder.find(rem.as_bytes()).is_some() {
-                            return true;
-                        }
-                    }
-
-                    Transition::AllIfEquals(s) => {
-                        if rem == s {
-                            return true;
-                        }
-                    }
-                }
-            }
-        }
-
-        false
-    }
-}
-
-#[derive(Debug, Clone)]
-struct DFA {
-    transitions: Vec<(Transition, State)>,
-}
-
-impl DFA {
-    fn from_nfa(nfa: NFA) -> Self {
-        let mut transitions = FxHashMap::default();
-        let curr_state = BitSet::from_iter([nfa.transitions.start_state()]);
-
-        loop {
-            for state in curr_state.iter() {
-                for (next_state, transition) in nfa.transitions.transitions(state) {
-                    transitions
-                        .entry(state.clone())
-                        .or_insert_with(|| FxHashMap::default())
-                        .entry(transition)
-                        .or_insert_with(|| BitSet::new())
-                        .insert(next_state);
-                }
-            }
-        }
-    }
-
-    fn start_state(&self) -> State {
-        0
-    }
-
-    fn end_state(&self) -> State {
-        1
-    }
-
-    fn matches(&self, s: &str) -> bool {
-        let mut state = self.start_state();
-        let mut rem = s;
-        loop {
-            if state == self.end_state() {
-                return rem.is_empty();
-            }
-
-            let (transition, next_state) = &self.transitions[state];
-            match transition {
-                Transition::Skip(n) => {
-                    let (num_chars, char_bytes) = rem
-                        .chars()
-                        .take(*n)
-                        .fold((0, 0), |(num_chars, char_bytes), c| {
-                            (num_chars + 1, char_bytes + c.len_utf8())
-                        });
-
-                    if num_chars < *n {
-                        // We can't skip this many characters.
-                        return false;
-                    }
-
-                    state = *next_state;
-                    rem = &rem[char_bytes..];
-                }
-
-                Transition::Prefix(prefix) => {
-                    if !rem.starts_with(prefix.deref()) {
-                        return false;
-                    }
-
-                    state = *next_state;
-                    rem = &rem[prefix.len()..];
-                }
-
-                Transition::SkipToSubString(finder) => {
-                    if let Some(pos) = finder.find(rem.as_bytes()) {
-                        let consumed_bytes = pos + finder.needle().len();
-                        state = *next_state;
-                        rem = &rem[consumed_bytes..];
-                    } else {
-                        return false;
-                    }
-                }
-
-                Transition::End => {
-                    return rem.is_empty();
-                }
-
-                Transition::All => {
-                    return true;
-                }
-
-                Transition::AllIfStartsWith(prefix) => {
-                    return rem.starts_with(prefix.deref());
-                }
-
-                Transition::AllIfEndsWith(suffix) => {
-                    return rem.ends_with(suffix.deref());
-                }
-
-                Transition::AllIfContains(finder) => {
-                    return finder.find(rem.as_bytes()).is_some();
-                }
-
-                Transition::AllIfEquals(s) => {
-                    return rem == s;
                 }
             }
         }
@@ -732,7 +816,7 @@ impl DFA {
 
 #[derive(Debug, Clone)]
 pub struct LikeMatcher {
-    nfa: NFA,
+    dfa: DFA,
 }
 
 impl LikeMatcher {
@@ -740,11 +824,12 @@ impl LikeMatcher {
         let tokens = lex(s);
         let matchers = Matchers::from_tokens(tokens).optimize();
         let nfa = NFA::from_matchers(matchers);
-        LikeMatcher { nfa }
+        let dfa = DFA::from_nfa(nfa);
+        LikeMatcher { dfa }
     }
 
     pub fn matches(&self, input: &str) -> bool {
-        self.nfa.matches(input)
+        self.dfa.matches(input)
     }
 }
 
@@ -841,7 +926,7 @@ mod tests {
     fn test_greediness() {
         assert!(LikeMatcher::new("'%'").matches("' 'hello' world'"));
         assert!(LikeMatcher::new("a '%' b c").matches("a 'd' b c 'd' b c"));
-        assert!(LikeMatcher::new("'%'%'").matches("'a'a'a'a'a'a'a'a'a'"));
+        assert!(LikeMatcher::new("'%'%%'%'").matches("'a'a'a'a'a'a'a'a'a'"));
     }
 
     proptest! {
