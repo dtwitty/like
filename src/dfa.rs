@@ -19,8 +19,8 @@ struct DFATransitions {
 impl DFATransitions {
     fn new() -> Self {
         DFATransitions {
-            terminal_transitions: Vec::new(),
-            state_transitions: Vec::new(),
+            terminal_transitions: Vec::with_capacity(0),
+            state_transitions: Vec::with_capacity(0),
         }
     }
 

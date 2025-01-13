@@ -1,5 +1,5 @@
-use crate::automata::{State, StateTransition, TerminalTransition, };
-use crate::automata::{StateTransition::*, TerminalTransition::* };
+use crate::automata::{State, StateTransition, TerminalTransition};
+use crate::automata::{StateTransition::*, TerminalTransition::*};
 use crate::matchers::{Matcher, Matchers};
 use memchr::memmem::Finder;
 use std::sync::Arc;
@@ -13,8 +13,8 @@ struct NFATransitions {
 impl NFATransitions {
     fn new() -> NFATransitions {
         NFATransitions {
-            terminal_transitions: Vec::new(),
-            state_transitions: Vec::new(),
+            terminal_transitions: Vec::with_capacity(0),
+            state_transitions: Vec::with_capacity(0),
         }
     }
 }
