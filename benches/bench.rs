@@ -34,57 +34,29 @@ impl RegexLikeMatcher {
 
 fn patterns_and_inputs() -> &'static [(&'static str, &'static str)] {
     &[
+        ("exact_match", "exact_match"),
+        ("%a%", "abc"),
+        ("_b_", "abc"),
+        ("a_c", "abc"),
+        ("x_y", "abc"),
+        ("%hello%", "this is a hello world example"),
+        ("_h_llo", "oh hello there"),
+        ("_x_", "this is a long string"),
+        ("%abc", "1234567890abcdefghijklmnopqrstuvwxyz"),
+        ("a%very_long_pattern_that_does_not_match", "short"),
+        ("%short_text", "short_text"),
+        ("long_pattern_that_ends_in_a%z", "long_end_in_a_z"),
+        ("lo%rld", "loworld"),
+        ("%this%is%long%", "this text is very long and matches"),
+        (
+            "%pattern_not_found%",
+            "this string does not contain the pattern",
+        ),
+        ("l%o%r%g", "lots_of_random_gibberish"),
+        ("start%middle%end", "start_some_content_middle_end"),
         ("", ""),
-        ("", "world"),
-        ("world", "world"),
-        ("hello", "world"),
-        ("hello%", "hello world"),
-        ("hello%", "world"),
-        ("%world", "hello world"),
-        ("%world", "hello"),
-        ("%world%", "hello world"),
-        ("%hello%", "hello world"),
-        ("%llo wo%", "hello world"),
-        ("%world%", "hello"),
-        ("%🔥%", "hello 🔥"),
-        ("%🔥%", "🔥hello"),
-        ("_", ""),
-        ("_", "w"),
-        ("_", "he"),
-        ("_______________________", "aaaaaaaaaaaaaaaaaaaaaaa"),
-        ("h_llo", "hello"),
-        ("h_llo", "world"),
-        ("h_llo", "h🔥llo"),
-        ("%", "hello world"),
-        ("%%", "hello world"),
         ("%", ""),
-        ("%%", ""),
-        ("h_%o", "ho"),
-        ("%_", ""),
-        ("_%", ""),
-        ("%_", "hello world"),
-        ("_%", "hello world"),
-        ("%_", "h"),
-        ("_%", "h"),
-        ("h_%o", "hello"),
-        ("h%_o", "hello"),
-        ("h_%o", "hlo"),
-        ("h%_o", "hlo"),
-        ("h%_o", "ho"),
-        ("h_%o", "world"),
-        ("h%_o", "world"),
-        (r"hello\%", "hello%"),
-        (r"hello\_", "hello_"),
-        (r"hello\%", "hello"),
-        (r"hello\_", "hello"),
-        (r"hel\\o%", "hel\\o"),
-        (r"hel\o%", "hel\\p"),
-        (r"hel\o%", "hel\\"),
-        (r"hel\o%", "hl\\o"),
-        (r"h\%o", "h%o"),
-        ("'%'", "' 'hello' world'"),
-        ("a '%' b c", "a 'd' b c 'd' b c"),
-        ("'%'%'", "'a'a'a'a'a'a'a'a'a'"),
+        ("_", ""),
     ]
 }
 
@@ -118,13 +90,11 @@ fn benchmark_matching(c: &mut Criterion) {
             |b| b.iter(|| like_matcher.matches(black_box(input))),
         );
 
-        /*
         let regex_like_matcher = RegexLikeMatcher::new(pattern);
         group.bench_function(
             format!("RegexLikeMatcher(\"{pattern}\").matches(\"{input}\")"),
             |b| b.iter(|| regex_like_matcher.matches(black_box(input))),
         );
-         */
     }
 
     group.finish();
