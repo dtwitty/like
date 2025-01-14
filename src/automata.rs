@@ -157,7 +157,7 @@ impl TerminalTransition {
             TerminalTransition::AllIfEndsWith(suffix) => s.ends_with(suffix),
             TerminalTransition::AllIfContains(finder) => finder.find(s.as_bytes()).is_some(),
             TerminalTransition::AllIfEquals(s2) => s == s2,
-            TerminalTransition::AllIfLen(n) => s.len() == *n,
+            TerminalTransition::AllIfLen(n) => s.chars().map(|c| c.len_utf8()).sum::<usize>() == *n,
         }
     }
 }

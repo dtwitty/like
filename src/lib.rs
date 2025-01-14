@@ -8,9 +8,32 @@ use crate::dfa::DFA;
 use crate::matchers::*;
 use crate::nfa::NFA;
 use crate::tokens::*;
+use memchr::memmem::Finder;
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
+enum PreFilter {
+    EndsWith(String),
+}
+
+impl PreFilter {
+    fn matches(&self, s: &str) -> bool {
+        match self {
+            PreFilter::EndsWith(suffix) => s.ends_with(suffix),
+        }
+    }
+}
+
+fn get_prefilters(matchers: &Matchers) -> Vec<PreFilter> {
+    match &matchers.as_vec()[..] {
+        [.., Matcher::EndsWith(s)] => vec![PreFilter::EndsWith(s.to_string())],
+        [.., Matcher::Equals(s)] => vec![PreFilter::EndsWith(s.to_string())],
+        _ => vec![],
+    }
+}
+
+#[derive(Clone)]
 pub struct LikeMatcher {
+    prefilters: Vec<PreFilter>,
     dfa: DFA,
 }
 
@@ -18,12 +41,17 @@ impl LikeMatcher {
     pub fn new(s: &str) -> LikeMatcher {
         let tokens = lex(s);
         let matchers = Matchers::from_tokens(tokens).optimize();
+        let prefilters = get_prefilters(&matchers);
         let nfa = NFA::from_matchers(matchers);
         let dfa = DFA::from_nfa(nfa);
-        LikeMatcher { dfa }
+        LikeMatcher { prefilters, dfa }
     }
 
     pub fn matches(&self, input: &str) -> bool {
+        if !self.prefilters.iter().all(|p| p.matches(input)) {
+            return false;
+        }
+
         self.dfa.matches(input)
     }
 }
@@ -31,8 +59,8 @@ impl LikeMatcher {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use proptest::prelude::*;
     use crate::tokens::Token::{Any, Literal, Single};
+    use proptest::prelude::*;
 
     #[test]
     fn test_empty() {
@@ -165,7 +193,7 @@ mod tests {
             let regex_matcher = RegexLikeMatcher::new(&pattern);
             let like_result = like_matcher.matches(&input);
             let regex_result = regex_matcher.matches(&input);
-            assert_eq!(like_result, regex_result);
+            prop_assert_eq!(like_result, regex_result);
         }
 
         #[test]

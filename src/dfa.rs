@@ -148,13 +148,11 @@ impl DFA {
         }
     }
 
-    #[cfg(test)]
-    fn states(&self) -> impl Iterator<Item = State> {
+    pub fn states(&self) -> impl Iterator<Item = State> {
         (0..self.transitions.len()).map(State)
     }
 
-    #[cfg(test)]
-    fn terminal_transition(&self, s: State) -> Option<&TerminalTransition> {
+    pub fn terminal_transition(&self, s: State) -> Option<&TerminalTransition> {
         self.transitions[s.0].terminal_transition.as_ref()
     }
 

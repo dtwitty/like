@@ -2,6 +2,7 @@ use crate::tokens::{Token, Tokens};
 use std::borrow::Cow;
 use std::fmt::{Debug, Formatter};
 use std::ops::Deref;
+use std::slice::Iter;
 use std::vec::IntoIter;
 
 /// Matching units that can non-deterministically consume characters from a string.
@@ -86,6 +87,10 @@ impl<'a> Matchers<'a> {
     #[cfg(test)]
     fn from_vec(matchers: Vec<Matcher<'a>>) -> Self {
         Matchers { matchers }
+    }
+
+    pub fn as_vec(&self) -> &Vec<Matcher<'a>> {
+        &self.matchers
     }
 
     pub fn optimize(self) -> Self {
@@ -328,6 +333,17 @@ impl<'a> IntoIterator for Matchers<'a> {
     }
 }
 
+pub type MatchersIter<'a> = Iter<'a, Matcher<'a>>;
+
+impl<'a> IntoIterator for &'a Matchers<'a> {
+    type Item = &'a Matcher<'a>;
+    type IntoIter = MatchersIter<'a>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.matchers.iter()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::Matcher::*;
@@ -392,6 +408,10 @@ mod tests {
         let tokens = lex("");
         let matchers = Matchers::from_tokens(tokens).optimize();
         assert_eq!(matchers, Matchers::from_vec(vec![End]));
+
+        let tokens = lex("_");
+        let matchers = Matchers::from_tokens(tokens).optimize();
+        assert_eq!(matchers, Matchers::from_vec(vec![Len(1)]));
     }
 
     proptest! {
