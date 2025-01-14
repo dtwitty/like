@@ -34,7 +34,7 @@ impl RegexLikeMatcher {
 
 fn patterns_and_inputs() -> &'static [(&'static str, &'static str)] {
     &[
-        ("exact_match", "exact_match"),
+        ("exact-match", "exact-match"),
         ("%a%", "abc"),
         ("_b_", "abc"),
         ("a_c", "abc"),

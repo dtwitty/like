@@ -134,6 +134,10 @@ impl NFA {
                 Matcher::Equals(s) => {
                     nfa.add_terminal_transition(prev_state, AllIfEquals(s.into_owned()));
                 }
+
+                Matcher::Len(n) => {
+                    nfa.add_terminal_transition(prev_state, AllIfLen(n));
+                }
             }
         }
 

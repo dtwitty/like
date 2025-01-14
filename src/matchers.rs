@@ -26,6 +26,8 @@ pub enum Matcher<'a> {
     Contains(Cow<'a, str>),
     /// Consume the entire string if it equals the given string.
     Equals(Cow<'a, str>),
+    /// Consume the entire string if it has the given length.
+    Len(usize),
 }
 
 /// A sequence of matchers.
@@ -83,6 +85,12 @@ impl<'a> Matchers<'a> {
                     changed = true;
                 }
 
+                (Len(0), _) => {
+                    v.push(End);
+                    i += 1;
+                    changed = true;
+                }
+
                 // Remove empty "skip to literal".
                 (SkipToLiteral(s), _) if s.is_empty() => {
                     i += 1;
@@ -131,6 +139,13 @@ impl<'a> Matchers<'a> {
                 // Combine any combination of "at least" and "exactly" counters.
                 (AtLeast(a), Exactly(b)) | (AtLeast(a), AtLeast(b)) | (Exactly(b), AtLeast(a)) => {
                     v.push(AtLeast(a + b));
+                    i += 1;
+                    changed = true;
+                }
+
+                (AtLeast(a), Len(b)) => {
+                    v.push(Exactly(*a + *b));
+                    v.push(All);
                     i += 1;
                     changed = true;
                 }
@@ -229,80 +244,24 @@ impl<'a> Matchers<'a> {
                     changed = true;
                 }
 
-                (Literal(_), SkipToLiteral(_)) => {
-                    v.push(a.clone());
+                (Exactly(a), End) => {
+                    v.push(Len(*a));
+                    i += 1;
+                    changed = true;
                 }
 
-                (Literal(_), AtLeast(_)) => {
-                    v.push(a.clone());
+                (Exactly(a), Len(b)) => {
+                    v.push(Len(*a + *b));
+                    i += 1;
+                    changed = true;
                 }
 
-                (Literal(_), Exactly(_)) => {
-                    v.push(a.clone());
-                }
-
-                (Literal(_), EndsWith(_)) => {
-                    v.push(a.clone());
-                }
-
-                (Literal(_), Contains(_)) => {
-                    v.push(a.clone());
-                }
-
-                (SkipToLiteral(_), SkipToLiteral(_)) => {
-                    v.push(a.clone());
-                }
-
-                (SkipToLiteral(_), AtLeast(_)) => {
-                    v.push(a.clone());
-                }
-
-                (SkipToLiteral(_), Exactly(_)) => {
-                    v.push(a.clone());
-                }
-
-                (SkipToLiteral(_), EndsWith(_)) => {
-                    v.push(a.clone());
-                }
-
-                (SkipToLiteral(_), Contains(_)) => {
-                    v.push(a.clone());
-                }
-
-                (Exactly(_), Literal(_)) => {
-                    v.push(a.clone());
-                }
-
-                (Exactly(_), SkipToLiteral(_)) => {
-                    v.push(a.clone());
-                }
-
-                (Exactly(_), End) => {
-                    v.push(a.clone());
-                }
-
-                (Exactly(_), All) => {
-                    v.push(a.clone());
-                }
-
-                (Exactly(_), StartsWith(_)) => {
-                    v.push(a.clone());
-                }
-
-                (Exactly(_), EndsWith(_)) => {
-                    v.push(a.clone());
-                }
-
-                (Exactly(_), Contains(_)) => {
-                    v.push(a.clone());
-                }
-
-                (Exactly(_), Equals(_)) => {
-                    v.push(a.clone());
-                }
-
-                (End | All | StartsWith(_) | EndsWith(_) | Contains(_) | Equals(_), _) => {
+                (End | All | StartsWith(_) | EndsWith(_) | Contains(_) | Equals(_) | Len(_), _) => {
                     unreachable!("{:?} should always be the last matcher", a);
+                }
+
+                _ => {
+                    v.push(a.clone());
                 }
             }
 

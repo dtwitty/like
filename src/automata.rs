@@ -109,6 +109,8 @@ pub enum TerminalTransition {
     AllIfContains(Finder<'static>),
     /// Transition is allowed if the string equals the given string.
     AllIfEquals(String),
+    /// Transition is allowed if the string has the given length.
+    AllIfLen(usize),
 }
 
 impl TerminalTransition {
@@ -120,6 +122,7 @@ impl TerminalTransition {
             TerminalTransition::AllIfEndsWith(suffix) => s.ends_with(suffix),
             TerminalTransition::AllIfContains(finder) => finder.find(s.as_bytes()).is_some(),
             TerminalTransition::AllIfEquals(s2) => s == s2,
+            TerminalTransition::AllIfLen(n) => s.len() == *n,
         }
     }
 }
@@ -154,6 +157,11 @@ impl Hash for TerminalTransition {
                 discriminant(self).hash(state);
                 s.hash(state);
             }
+
+            TerminalTransition::AllIfLen(n) => {
+                discriminant(self).hash(state);
+                n.hash(state);
+            }
         }
     }
 }
@@ -171,6 +179,7 @@ impl PartialEq<TerminalTransition> for TerminalTransition {
                 a.needle() == b.needle()
             }
             (TerminalTransition::AllIfEquals(a), TerminalTransition::AllIfEquals(b)) => a == b,
+            (TerminalTransition::AllIfLen(a), TerminalTransition::AllIfLen(b)) => a == b,
             _ => false,
         }
     }
