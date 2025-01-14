@@ -6,26 +6,27 @@ use std::collections::VecDeque;
 
 #[derive(Debug, Clone)]
 struct DFABuilderTransitions {
-    terminal_transitions: Vec<TerminalTransition>,
+    terminal_transition: Option<TerminalTransition>,
     state_transitions: FxHashMap<StateTransition, BitSet>,
 }
 
 #[derive(Debug, Clone)]
 struct DFATransitions {
-    terminal_transitions: Vec<TerminalTransition>,
+    terminal_transition: Option<TerminalTransition>,
     state_transitions: Vec<(StateTransition, State)>,
 }
 
 impl DFATransitions {
     fn new() -> Self {
         DFATransitions {
-            terminal_transitions: Vec::with_capacity(0),
+            terminal_transition: None,
             state_transitions: Vec::with_capacity(0),
         }
     }
 
-    fn add_terminal_transition(&mut self, transition: TerminalTransition) {
-        self.terminal_transitions.push(transition);
+    fn set_terminal_transition(&mut self, transition: TerminalTransition) {
+        assert!(self.terminal_transition.is_none());
+        self.terminal_transition = Some(transition);
     }
 
     fn add_state_transition(&mut self, transition: StateTransition, state: State) {
@@ -62,11 +63,13 @@ impl DFA {
             num_states_visited += 1;
 
             // Build up a map from transitions to the next (NFA) state sets.
-            let mut terminal_transitions = Vec::new();
+            let mut terminal_transition = None;
             let mut state_transitions = FxHashMap::default();
             for curr_nfa_state in curr_dfa_state.iter().map(State::new) {
-                for transition in nfa.terminal_transitions(curr_nfa_state) {
-                    terminal_transitions.push(transition.clone());
+
+                if let Some(transition) = nfa.terminal_transition(curr_nfa_state) {
+                    assert!(terminal_transition.is_none());
+                    terminal_transition = Some(transition.clone());
                 }
 
                 for (transition, next_nfa_state) in nfa.state_transitions(curr_nfa_state) {
@@ -84,7 +87,7 @@ impl DFA {
 
             // Record the outcome for the current DFA state.
             let local_transitions = DFABuilderTransitions {
-                terminal_transitions,
+                terminal_transition,
                 state_transitions,
             };
 
@@ -109,8 +112,8 @@ impl DFA {
                 optimized_transitions.add_state_transition(transition, State(next_order));
             }
 
-            for transition in builder_transitions.terminal_transitions {
-                optimized_transitions.add_terminal_transition(transition);
+            if let Some(transition) = builder_transitions.terminal_transition {
+                optimized_transitions.set_terminal_transition(transition);
             }
 
             transitions.push(optimized_transitions);
@@ -129,7 +132,7 @@ impl DFA {
         'outer: loop {
             let transitions = &self.transitions[state.0];
 
-            for transition in &transitions.terminal_transitions {
+            if let Some(transition) = &transitions.terminal_transition {
                 return transition.try_transition(rem);
             }
 
@@ -144,4 +147,66 @@ impl DFA {
             return false;
         }
     }
+
+    #[cfg(test)]
+    fn states(&self) -> impl Iterator<Item = State> {
+        (0..self.transitions.len()).map(State)
+    }
+
+    #[cfg(test)]
+    fn terminal_transition(&self, s: State) -> Option<&TerminalTransition> {
+        self.transitions[s.0].terminal_transition.as_ref()
+    }
+
+    #[cfg(test)]
+    fn state_transitions(&self, s: State) -> impl Iterator<Item = &(StateTransition, State)> {
+        self.transitions[s.0].state_transitions.iter()
+    }
 }
+
+/*
+#[cfg(test)]
+mod tests {
+    use crate::automata::StateTransition::*;
+    use crate::dfa::DFA;
+    use crate::matchers::Matchers;
+    use crate::nfa::NFA;
+    use crate::tokens::lex;
+    use proptest::prelude::ProptestConfig;
+    use proptest::proptest;
+
+    proptest! {
+        #![proptest_config(ProptestConfig {
+            // Generate lots of test cases.
+            cases: 1 << 14,
+            .. ProptestConfig::default()
+        })]
+
+        #[test]
+        fn test_invariants(pattern in ".*") {
+            let tokens = lex(&pattern);
+            let matchers = Matchers::from_tokens(tokens).optimize();
+            let nfa = NFA::from_matchers(matchers);
+            let dfa = DFA::from_nfa(nfa);
+
+            for state in dfa.states() {
+                // Ensure that all state transitions are mutually exclusive.
+                let transitions = dfa.state_transitions(*state).collect();
+                for i in 0..transitions.len() {
+                    for j in 0..transitions.len() {
+                        if i == j {
+                            continue;
+                        }
+
+                        let (t1, _) = transitions[i];
+                        let (t2, _) = transitions[j];
+
+
+                    }
+                }
+            }
+
+        }
+    }
+}
+*/

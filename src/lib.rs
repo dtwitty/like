@@ -32,6 +32,7 @@ impl LikeMatcher {
 mod tests {
     use super::*;
     use proptest::prelude::*;
+    use crate::tokens::Token::{Any, Literal, Single};
 
     #[test]
     fn test_empty() {
@@ -124,17 +125,47 @@ mod tests {
         assert!(LikeMatcher::new("'%'%%'%'").matches("'a'a'a'a'a'a'a'a'a'"));
     }
 
+    struct RegexLikeMatcher {
+        regex: regex::Regex,
+    }
+
+    impl RegexLikeMatcher {
+        fn new(pattern: &str) -> Self {
+            let tokens = lex(pattern);
+            let mut re = String::new();
+            re.push('^');
+            for token in tokens {
+                match token {
+                    Any => re.push_str(".*"),
+                    Single => re.push_str("."),
+                    Literal(lit) => re.push_str(&regex::escape(lit)),
+                }
+            }
+            re.push('$');
+            Self {
+                regex: regex::Regex::new(&re).unwrap(),
+            }
+        }
+
+        fn matches(&self, input: &str) -> bool {
+            self.regex.is_match(input)
+        }
+    }
+
     proptest! {
         #![proptest_config(ProptestConfig {
             // Generate lots of test cases.
-            cases: 1 << 14,
+            cases: 1 << 16,
             .. ProptestConfig::default()
         })]
 
         #[test]
-        fn test_matching_never_fails(pattern in ".*", input in ".*") {
-            let matcher = LikeMatcher::new(&pattern);
-            matcher.matches(&input);
+        fn test_matching_correctness(pattern in ".*", input in ".*") {
+            let like_matcher = LikeMatcher::new(&pattern);
+            let regex_matcher = RegexLikeMatcher::new(&pattern);
+            let like_result = like_matcher.matches(&input);
+            let regex_result = regex_matcher.matches(&input);
+            assert_eq!(like_result, regex_result);
         }
 
         #[test]

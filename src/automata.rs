@@ -1,4 +1,5 @@
 use memchr::memmem::Finder;
+use std::fmt::{Debug, Formatter};
 use std::hash::{Hash, Hasher};
 use std::mem::discriminant;
 use std::sync::Arc;
@@ -12,7 +13,7 @@ impl State {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub enum StateTransition {
     /// Transition is allowed if we can consume the given prefix.
     Prefix(String),
@@ -21,6 +22,20 @@ pub enum StateTransition {
     SkipToSubString(Arc<Finder<'static>>),
     /// Transition is allowed if there are n characters to consume.
     Skip(usize),
+}
+
+impl Debug for StateTransition {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            StateTransition::Prefix(s) => write!(f, "Prefix(\"{}\")", s),
+            StateTransition::SkipToSubString(finder) => write!(
+                f,
+                "SkipToSubString(\"{}\")",
+                std::str::from_utf8(finder.needle()).unwrap()
+            ),
+            StateTransition::Skip(n) => write!(f, "Skip({})", n),
+        }
+    }
 }
 
 impl StateTransition {
@@ -95,7 +110,7 @@ impl PartialEq<StateTransition> for StateTransition {
 
 impl Eq for StateTransition {}
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub enum TerminalTransition {
     /// Transition is allowed if we have consumed the entire string.
     End,
@@ -111,6 +126,26 @@ pub enum TerminalTransition {
     AllIfEquals(String),
     /// Transition is allowed if the string has the given length.
     AllIfLen(usize),
+}
+
+impl Debug for TerminalTransition {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TerminalTransition::End => write!(f, "End"),
+            TerminalTransition::All => write!(f, "All"),
+            TerminalTransition::AllIfStartsWith(s) => write!(f, "AllIfStartsWith(\"{}\")", s),
+            TerminalTransition::AllIfEndsWith(s) => write!(f, "AllIfEndsWith(\"{}\")", s),
+            TerminalTransition::AllIfContains(finder) => {
+                write!(
+                    f,
+                    "AllIfContains({})",
+                    std::str::from_utf8(finder.needle()).unwrap()
+                )
+            }
+            TerminalTransition::AllIfEquals(s) => write!(f, "AllIfEquals(\"{}\")", s),
+            TerminalTransition::AllIfLen(n) => write!(f, "AllIfLen({})", n),
+        }
+    }
 }
 
 impl TerminalTransition {

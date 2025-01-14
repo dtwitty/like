@@ -1,10 +1,11 @@
 use crate::tokens::{Token, Tokens};
 use std::borrow::Cow;
+use std::fmt::{Debug, Formatter};
 use std::ops::Deref;
 use std::vec::IntoIter;
 
 /// Matching units that can non-deterministically consume characters from a string.
-#[derive(Debug, Clone)]
+#[derive(Clone, PartialEq, Eq)]
 pub enum Matcher<'a> {
     /// Consume a literal string.
     Literal(Cow<'a, str>),
@@ -30,10 +31,40 @@ pub enum Matcher<'a> {
     Len(usize),
 }
 
+impl<'a> Debug for Matcher<'a> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        use Matcher::*;
+        match self {
+            Literal(s) => write!(f, "Literal(\"{}\")", s),
+            SkipToLiteral(s) => write!(f, "SkipToLiteral(\"{}\")", s),
+            AtLeast(n) => write!(f, "AtLeast({})", n),
+            Exactly(n) => write!(f, "Exactly({})", n),
+            End => write!(f, "End"),
+            All => write!(f, "All"),
+            StartsWith(s) => write!(f, "StartsWith(\"{}\")", s),
+            EndsWith(s) => write!(f, "EndsWith(\"{}\")", s),
+            Contains(s) => write!(f, "Contains(\"{}\")", s),
+            Equals(s) => write!(f, "Equals(\"{}\")", s),
+            Len(n) => write!(f, "Len({})", n),
+        }
+    }
+}
+
+impl<'a> Matcher<'a> {
+    #[cfg(test)]
+    pub fn is_terminal(&self) -> bool {
+        use Matcher::*;
+        match self {
+            End | All | StartsWith(_) | EndsWith(_) | Contains(_) | Equals(_) | Len(_) => true,
+            _ => false,
+        }
+    }
+}
+
 /// A sequence of matchers.
 /// This can be thought of as the "Intermediate Representation" (IR) of the matching engine.
 /// We run optimizations on it to reduce the search space during matching.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Matchers<'a> {
     matchers: Vec<Matcher<'a>>,
 }
@@ -50,6 +81,11 @@ impl<'a> Matchers<'a> {
 
         v.push(Matcher::End);
         Matchers { matchers: v }
+    }
+
+    #[cfg(test)]
+    fn from_vec(matchers: Vec<Matcher<'a>>) -> Self {
+        Matchers { matchers }
     }
 
     pub fn optimize(self) -> Self {
@@ -289,5 +325,128 @@ impl<'a> IntoIterator for Matchers<'a> {
 
     fn into_iter(self) -> Self::IntoIter {
         self.matchers.into_iter()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Matcher::*;
+    use super::*;
+    use crate::tokens::lex;
+    use proptest::prelude::ProptestConfig;
+    use proptest::proptest;
+    #[test]
+    fn test_optimizations() {
+        let tokens = lex("hello%");
+        let matchers = Matchers::from_tokens(tokens).optimize();
+        assert_eq!(
+            matchers,
+            Matchers::from_vec(vec![StartsWith(Cow::Borrowed("hello"))])
+        );
+
+        let tokens = lex("hello%world");
+        let matchers = Matchers::from_tokens(tokens).optimize();
+        assert_eq!(
+            matchers,
+            Matchers::from_vec(vec![
+                Literal(Cow::Borrowed("hello")),
+                EndsWith(Cow::Borrowed("world"))
+            ])
+        );
+
+        let tokens = lex("hello%world%");
+        let matchers = Matchers::from_tokens(tokens).optimize();
+        assert_eq!(
+            matchers,
+            Matchers::from_vec(vec![
+                Literal(Cow::Borrowed("hello")),
+                Contains(Cow::Borrowed("world"))
+            ])
+        );
+
+        let tokens = lex("%hello%world");
+        let matchers = Matchers::from_tokens(tokens).optimize();
+        assert_eq!(
+            matchers,
+            Matchers::from_vec(vec![
+                SkipToLiteral(Cow::Borrowed("hello")),
+                EndsWith(Cow::Borrowed("world"))
+            ])
+        );
+
+        let tokens = lex("_%_%_");
+        let matchers = Matchers::from_tokens(tokens).optimize();
+        assert_eq!(matchers, Matchers::from_vec(vec![Exactly(3), All]));
+
+        let tokens = lex("a%b%c");
+        let matchers = Matchers::from_tokens(tokens).optimize();
+        assert_eq!(
+            matchers,
+            Matchers::from_vec(vec![
+                Literal(Cow::Borrowed("a")),
+                SkipToLiteral(Cow::Borrowed("b")),
+                EndsWith(Cow::Borrowed("c"))
+            ])
+        );
+
+        let tokens = lex("");
+        let matchers = Matchers::from_tokens(tokens).optimize();
+        assert_eq!(matchers, Matchers::from_vec(vec![End]));
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig {
+            // Generate lots of test cases.
+            cases: 1 << 14,
+            .. ProptestConfig::default()
+        })]
+
+        #[test]
+        fn test_invariants(pattern in ".*") {
+            let tokens = lex(&pattern);
+            let matchers = Matchers::from_tokens(tokens).optimize();
+            let m = matchers.matchers;
+
+            // The matchers should never be empty.
+            assert!(!m.is_empty());
+
+            // The last matcher should always be terminal.
+            assert!(m.last().unwrap().is_terminal());
+
+            // Every other matcher should not be terminal.
+            for i in 0..m.len() - 1 {
+                assert!(!m[i].is_terminal());
+            }
+
+            // The matchers should not contain empty literals-like things.
+            for i in 0..m.len() {
+                match &m[i] {
+                    Literal(s) if s.is_empty() => assert!(false),
+                    SkipToLiteral(s) if s.is_empty() => assert!(false),
+                    StartsWith(s) if s.is_empty() => assert!(false),
+                    EndsWith(s) if s.is_empty() => assert!(false),
+                    Contains(s) if s.is_empty() => assert!(false),
+                    Equals(s) if s.is_empty() => assert!(false),
+                    _ => (),
+                }
+            }
+
+            // Helper matchers should be optimized away.
+            for i in 0..m.len() {
+                match &m[i] {
+                    AtLeast(_) => assert!(false),
+                    _ => (),
+                }
+            }
+
+            // The matchers should not contain empty counters.
+            for i in 0..m.len() {
+                match &m[i] {
+                    Exactly(0) => assert!(false),
+                    AtLeast(0) => assert!(false),
+                    _ => (),
+                }
+            }
+        }
     }
 }

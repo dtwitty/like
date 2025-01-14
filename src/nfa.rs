@@ -6,14 +6,14 @@ use std::sync::Arc;
 
 #[derive(Debug, Clone)]
 struct NFATransitions {
-    terminal_transitions: Vec<TerminalTransition>,
+    terminal_transition: Option<TerminalTransition>,
     state_transitions: Vec<(StateTransition, State)>,
 }
 
 impl NFATransitions {
     fn new() -> NFATransitions {
         NFATransitions {
-            terminal_transitions: Vec::with_capacity(0),
+            terminal_transition: None,
             state_transitions: Vec::with_capacity(0),
         }
     }
@@ -46,10 +46,10 @@ impl NFA {
             .push((transition, to));
     }
 
-    pub fn add_terminal_transition(&mut self, from: State, transition: TerminalTransition) {
-        self.transitions[from.0]
-            .terminal_transitions
-            .push(transition);
+    pub fn set_terminal_transition(&mut self, from: State, transition: TerminalTransition) {
+        let o = &mut self.transitions[from.0];
+        assert!(o.terminal_transition.is_none());
+        o.terminal_transition = Some(transition);
     }
 
     pub fn state_transitions(
@@ -59,8 +59,13 @@ impl NFA {
         self.transitions[state.0].state_transitions.iter()
     }
 
-    pub fn terminal_transitions(&self, state: State) -> impl Iterator<Item = &TerminalTransition> {
-        self.transitions[state.0].terminal_transitions.iter()
+    pub fn terminal_transition(&self, state: State) -> Option<&TerminalTransition> {
+        self.transitions[state.0].terminal_transition.as_ref()
+    }
+
+    #[cfg(test)]
+    pub fn states(&self) -> impl Iterator<Item = State> {
+        (0..self.transitions.len()).map(State)
     }
 
     pub fn from_matchers(matchers: Matchers) -> NFA {
@@ -109,38 +114,80 @@ impl NFA {
                 }
 
                 Matcher::End => {
-                    nfa.add_terminal_transition(prev_state, End);
+                    nfa.set_terminal_transition(prev_state, End);
                 }
 
                 Matcher::All => {
-                    nfa.add_terminal_transition(prev_state, All);
+                    nfa.set_terminal_transition(prev_state, All);
                 }
 
                 Matcher::StartsWith(s) => {
-                    nfa.add_terminal_transition(prev_state, AllIfStartsWith(s.into_owned()));
+                    nfa.set_terminal_transition(prev_state, AllIfStartsWith(s.into_owned()));
                 }
 
                 Matcher::EndsWith(s) => {
-                    nfa.add_terminal_transition(prev_state, AllIfEndsWith(s.into_owned()));
+                    nfa.set_terminal_transition(prev_state, AllIfEndsWith(s.into_owned()));
                 }
 
                 Matcher::Contains(s) => {
-                    nfa.add_terminal_transition(
+                    nfa.set_terminal_transition(
                         prev_state,
                         AllIfContains(Finder::new(s.as_bytes()).into_owned()),
                     );
                 }
 
                 Matcher::Equals(s) => {
-                    nfa.add_terminal_transition(prev_state, AllIfEquals(s.into_owned()));
+                    nfa.set_terminal_transition(prev_state, AllIfEquals(s.into_owned()));
                 }
 
                 Matcher::Len(n) => {
-                    nfa.add_terminal_transition(prev_state, AllIfLen(n));
+                    nfa.set_terminal_transition(prev_state, AllIfLen(n));
                 }
             }
         }
 
         nfa
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tokens::lex;
+    use proptest::prelude::ProptestConfig;
+    use proptest::proptest;
+
+    proptest! {
+        #![proptest_config(ProptestConfig {
+            // Generate lots of test cases.
+            cases: 1 << 14,
+            .. ProptestConfig::default()
+        })]
+
+        #[test]
+        fn test_invariants(pattern in ".*") {
+            let tokens = lex(&pattern);
+            let matchers = Matchers::from_tokens(tokens).optimize();
+            let nfa = NFA::from_matchers(matchers);
+
+            for state in nfa.states() {
+                // Check invariants for individual transitions.
+                for (transition, _) in nfa.state_transitions(state) {
+                    match transition {
+                        Skip(n) => {
+                            assert!(*n > 0);
+                        }
+
+                        SkipToSubString(s) => {
+                            assert!(!s.needle().is_empty());
+                        }
+
+                        Prefix(s) => {
+                            assert!(!s.is_empty());
+                        }
+                    }
+                }
+            }
+        }
     }
 }

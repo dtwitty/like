@@ -2,16 +2,22 @@ use std::slice::Iter;
 use std::vec::IntoIter;
 
 /// A unit of a LIKE pattern.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Token<'a> {
     Literal(&'a str),
     Any,
     Single,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Tokens<'a> {
     tokens: Vec<Token<'a>>,
+}
+
+impl<'a> Tokens<'a>{
+    pub fn new(tokens: Vec<Token<'a>>) -> Self {
+        Self { tokens }
+    }
 }
 
 pub type TokensIntoIter<'a> = IntoIter<Token<'a>>;
