@@ -1,12 +1,9 @@
-mod automata;
-mod dfa;
 mod matchers;
-mod nfa;
+mod patterns;
 pub mod tokens;
 
-use crate::dfa::DFA;
-use crate::matchers::*;
-use crate::nfa::NFA;
+use crate::matchers::{Matcher, Matchers, TerminalMatcher};
+use crate::patterns::*;
 use crate::tokens::*;
 
 #[derive(Clone)]
@@ -23,9 +20,12 @@ impl PreFilter {
 }
 
 fn get_prefilters(matchers: &Matchers) -> Vec<PreFilter> {
-    match &matchers.as_vec()[..] {
-        [.., Matcher::EndsWith(s)] => vec![PreFilter::EndsWith(s.to_string())],
-        [.., Matcher::Equals(s)] => vec![PreFilter::EndsWith(s.to_string())],
+    use Matcher::*;
+    use TerminalMatcher::*;
+    match &matchers[..] {
+        // For these, we want there to be more than 1 matcher, otherwise we are just repeating work.
+        [.., _, Terminal(EndsWith(s))] => vec![PreFilter::EndsWith(s.to_string())],
+        [.., _, Terminal(Equals(s))] => vec![PreFilter::EndsWith(s.to_string())],
         _ => vec![],
     }
 }
@@ -33,25 +33,23 @@ fn get_prefilters(matchers: &Matchers) -> Vec<PreFilter> {
 #[derive(Clone)]
 pub struct LikeMatcher {
     prefilters: Vec<PreFilter>,
-    dfa: DFA,
+    matchers: Matchers,
 }
 
 impl LikeMatcher {
     pub fn new(s: &str) -> LikeMatcher {
         let tokens = lex(s);
-        let matchers = Matchers::from_tokens(tokens).optimize();
+        let patterns = Patterns::from_tokens(tokens).optimize();
+        let matchers = Matchers::from_patterns(patterns);
         let prefilters = get_prefilters(&matchers);
-        let nfa = NFA::from_matchers(matchers);
-        let dfa = DFA::from_nfa(nfa);
-        LikeMatcher { prefilters, dfa }
+        LikeMatcher {
+            prefilters,
+            matchers,
+        }
     }
 
     pub fn matches(&self, input: &str) -> bool {
-        if !self.prefilters.iter().all(|p| p.matches(input)) {
-            return false;
-        }
-
-        self.dfa.matches(input)
+        self.prefilters.iter().all(|p| p.matches(input)) && self.matchers.matches(input)
     }
 }
 
@@ -101,7 +99,7 @@ mod tests {
         assert!(LikeMatcher::new("_").matches("w"));
         assert!(!LikeMatcher::new("_").matches("he"));
         assert!(LikeMatcher::new("_").matches("🔥"));
-        assert!(LikeMatcher::new("_").matches( "¡"));
+        assert!(LikeMatcher::new("_").matches("¡"));
         assert!(LikeMatcher::new("_______________________").matches("aaaaaaaaaaaaaaaaaaaaaaa"));
         assert!(LikeMatcher::new("h_llo").matches("hello"));
         assert!(!LikeMatcher::new("h_llo").matches("world"));
