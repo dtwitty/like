@@ -1,6 +1,6 @@
 use crate::tokens::{Token, Tokens};
 use std::borrow::Cow;
-use std::fmt::{Debug, Formatter};
+use std::fmt::{Debug, Display, Formatter};
 use std::ops::Deref;
 
 /// Matching units that can non-deterministically consume characters from a string.
@@ -49,6 +49,12 @@ impl<'a> Debug for Pattern<'a> {
     }
 }
 
+impl<'a> Display for Pattern<'a> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self)
+    }
+}
+
 impl<'a> Pattern<'a> {
     #[cfg(test)]
     pub fn is_terminal(&self) -> bool {
@@ -66,6 +72,12 @@ impl<'a> Pattern<'a> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Patterns<'a>(Vec<Pattern<'a>>);
 
+impl<'a> Display for Patterns<'a> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self)
+    }
+}
+
 impl<'a> Deref for Patterns<'a> {
     type Target = [Pattern<'a>];
 
@@ -74,7 +86,7 @@ impl<'a> Deref for Patterns<'a> {
     }
 }
 
-impl <'a> From<Patterns<'a>> for Vec<Pattern<'a>> {
+impl<'a> From<Patterns<'a>> for Vec<Pattern<'a>> {
     fn from(value: Patterns<'a>) -> Self {
         value.0
     }
@@ -145,7 +157,7 @@ impl<'a> Patterns<'a> {
                 }
 
                 // Combine adjacent literals.
-                // Escaping can cause literals to be split during lexing.
+                // Escaping can cause literals to be split during Tokens::from_string.
                 (Literal(ref a), Literal(ref b)) => {
                     let a = a.clone();
                     let b = b.clone();
@@ -332,19 +344,18 @@ impl<'a> Patterns<'a> {
 mod tests {
     use super::Pattern::*;
     use super::*;
-    use crate::tokens::lex;
     use proptest::prelude::ProptestConfig;
     use proptest::proptest;
     #[test]
     fn test_optimizations() {
-        let tokens = lex("hello%");
+        let tokens = Tokens::from_str("hello%");
         let patterns = Patterns::from_tokens(tokens).optimize();
         assert_eq!(
             patterns,
             Patterns::from_vec(vec![StartsWith(Cow::Borrowed("hello"))])
         );
 
-        let tokens = lex("hello%world");
+        let tokens = Tokens::from_str("hello%world");
         let patterns = Patterns::from_tokens(tokens).optimize();
         assert_eq!(
             patterns,
@@ -354,7 +365,7 @@ mod tests {
             ])
         );
 
-        let tokens = lex("hello%world%");
+        let tokens = Tokens::from_str("hello%world%");
         let patterns = Patterns::from_tokens(tokens).optimize();
         assert_eq!(
             patterns,
@@ -364,7 +375,7 @@ mod tests {
             ])
         );
 
-        let tokens = lex("%hello%world");
+        let tokens = Tokens::from_str("%hello%world");
         let patterns = Patterns::from_tokens(tokens).optimize();
         assert_eq!(
             patterns,
@@ -374,11 +385,11 @@ mod tests {
             ])
         );
 
-        let tokens = lex("_%_%_");
+        let tokens = Tokens::from_str("_%_%_");
         let patterns = Patterns::from_tokens(tokens).optimize();
         assert_eq!(patterns, Patterns::from_vec(vec![Exactly(3), All]));
 
-        let tokens = lex("a%b%c");
+        let tokens = Tokens::from_str("a%b%c");
         let patterns = Patterns::from_tokens(tokens).optimize();
         assert_eq!(
             patterns,
@@ -389,11 +400,11 @@ mod tests {
             ])
         );
 
-        let tokens = lex("");
+        let tokens = Tokens::from_str("");
         let patterns = Patterns::from_tokens(tokens).optimize();
         assert_eq!(patterns, Patterns::from_vec(vec![End]));
 
-        let tokens = lex("_");
+        let tokens = Tokens::from_str("_");
         let patterns = Patterns::from_tokens(tokens).optimize();
         assert_eq!(patterns, Patterns::from_vec(vec![Len(1)]));
     }
@@ -407,7 +418,7 @@ mod tests {
 
         #[test]
         fn test_invariants(pattern in ".*") {
-            let tokens = lex(&pattern);
+            let tokens = Tokens::from_str(&pattern);
             let patterns = Patterns::from_tokens(tokens).optimize();
 
             // The patterns should never be empty.

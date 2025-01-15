@@ -2,7 +2,7 @@
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use like::tokens::Token::*;
-use like::{tokens::lex, LikeMatcher};
+use like::{tokens::Tokens, LikeMatcher};
 use std::collections::BTreeSet;
 
 struct RegexLikeMatcher {
@@ -11,10 +11,10 @@ struct RegexLikeMatcher {
 
 impl RegexLikeMatcher {
     fn new(pattern: &str) -> Self {
-        let tokens = lex(pattern);
+        let tokens = Tokens::from_str(pattern);
         let mut re = String::new();
         re.push('^');
-        for token in tokens {
+        for token in &tokens[..] {
             match token {
                 Any => re.push_str(".*"),
                 Single => re.push_str("."),

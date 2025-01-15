@@ -1,5 +1,5 @@
-use std::slice::Iter;
-use std::vec::IntoIter;
+use std::fmt::Display;
+use std::ops::Deref;
 
 /// A unit of a LIKE pattern.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -9,40 +9,41 @@ pub enum Token<'a> {
     Single,
 }
 
+impl Display for Token<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Token::Literal(s) => write!(f, "Literal(\"{}\")", s),
+            Token::Any => write!(f, "Any"),
+            Token::Single => write!(f, "Single"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct Tokens<'a> {
-    tokens: Vec<Token<'a>>,
-}
+pub struct Tokens<'a>(Vec<Token<'a>>);
 
-impl<'a> Tokens<'a>{
-    pub fn new(tokens: Vec<Token<'a>>) -> Self {
-        Self { tokens }
+impl<'a> Tokens<'a> {
+    pub fn from_str(s: &'a str) -> Self {
+        Self(lex(s).0)
     }
 }
 
-pub type TokensIntoIter<'a> = IntoIter<Token<'a>>;
-impl<'a> IntoIterator for Tokens<'a> {
-    type Item = Token<'a>;
-    type IntoIter = TokensIntoIter<'a>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.tokens.into_iter()
+impl Display for Tokens<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self)
     }
 }
 
-type TokensIter<'a> = Iter<'a, Token<'a>>;
+impl<'a> Deref for Tokens<'a> {
+    type Target = [Token<'a>];
 
-impl<'a> IntoIterator for &'a Tokens<'a> {
-    type Item = &'a Token<'a>;
-    type IntoIter = TokensIter<'a>;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.tokens.iter()
+    fn deref(&self) -> &Self::Target {
+        &self.0
     }
 }
 
 /// Lexes a LIKE pattern into tokens. Never fails because all strings are valid patterns.
-pub fn lex(input: &str) -> Tokens {
+fn lex(input: &str) -> Tokens {
     let mut tokens = Vec::new();
     let mut s = input;
 
@@ -52,7 +53,7 @@ pub fn lex(input: &str) -> Tokens {
         s = rest;
     }
 
-    Tokens { tokens }
+    Tokens(tokens)
 }
 
 /// Lexes a single token from the input. Never fails because all strings are valid patterns.

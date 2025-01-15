@@ -1,5 +1,6 @@
 use crate::patterns::{Pattern, Patterns};
 use memchr::memmem::Finder;
+use std::fmt::{Debug, Display, Formatter};
 use std::ops::Deref;
 
 #[derive(Clone)]
@@ -18,6 +19,33 @@ pub enum TerminalMatcher {
     Equals(String),
     /// Consume the entire string if it has the given length.
     Len(usize),
+}
+
+impl Debug for TerminalMatcher {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use TerminalMatcher::*;
+        match self {
+            All => write!(f, "All"),
+            End => write!(f, "End"),
+            StartsWith(prefix) => write!(f, "StartsWith(\"{}\")", prefix),
+            EndsWith(suffix) => write!(f, "EndsWith(\"{}\")", suffix),
+            Contains(finder) => {
+                write!(
+                    f,
+                    "Contains(\"{}\")",
+                    std::str::from_utf8(finder.needle()).unwrap()
+                )
+            }
+            Equals(s) => write!(f, "Equals(\"{}\")", s),
+            Len(n) => write!(f, "Len({})", n),
+        }
+    }
+}
+
+impl Display for TerminalMatcher {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self)
+    }
 }
 
 impl TerminalMatcher {
@@ -70,7 +98,28 @@ impl MedialMatcher {
     }
 }
 
-#[derive(Clone)]
+impl Debug for MedialMatcher {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use MedialMatcher::*;
+        match self {
+            Literal(s) => write!(f, "Literal(\"{}\")", s),
+            SkipToLiteral(finder) => write!(
+                f,
+                "SkipToLiteral(\"{}\")",
+                std::str::from_utf8(finder.needle()).unwrap()
+            ),
+            Exactly(n) => write!(f, "Exactly({})", n),
+        }
+    }
+}
+
+impl Display for MedialMatcher {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self)
+    }
+}
+
+#[derive(Debug, Clone)]
 pub enum Matcher {
     Terminal(TerminalMatcher),
     Medial(MedialMatcher),
@@ -100,7 +149,13 @@ impl Matcher {
     }
 }
 
-#[derive(Clone)]
+impl Display for Matcher {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self)
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct Matchers(Vec<Matcher>);
 
 impl Deref for Matchers {
@@ -128,6 +183,7 @@ impl Matchers {
                 Matcher::Terminal(tm) => {
                     return tm.matches(s);
                 }
+
                 Matcher::Medial(mm) => {
                     if let Some(rest) = mm.matches(s) {
                         s = rest;
@@ -138,5 +194,11 @@ impl Matchers {
             }
         }
         s.is_empty()
+    }
+}
+
+impl Display for Matchers {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:?}", self)
     }
 }

@@ -1,5 +1,5 @@
-mod matchers;
-mod patterns;
+pub mod matchers;
+pub mod patterns;
 pub mod tokens;
 
 use crate::matchers::{Matcher, Matchers, TerminalMatcher};
@@ -38,7 +38,7 @@ pub struct LikeMatcher {
 
 impl LikeMatcher {
     pub fn new(s: &str) -> LikeMatcher {
-        let tokens = lex(s);
+        let tokens = Tokens::from_str(s);
         let patterns = Patterns::from_tokens(tokens).optimize();
         let matchers = Matchers::from_patterns(patterns);
         let prefilters = get_prefilters(&matchers);
@@ -158,10 +158,10 @@ mod tests {
 
     impl RegexLikeMatcher {
         fn new(pattern: &str) -> Self {
-            let tokens = lex(pattern);
+            let tokens = Tokens::from_str(pattern);
             let mut re = String::new();
             re.push('^');
-            for token in tokens {
+            for token in &tokens[..] {
                 match token {
                     Any => re.push_str(".*"),
                     Single => re.push_str("."),
