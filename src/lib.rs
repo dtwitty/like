@@ -8,7 +8,6 @@ use crate::dfa::DFA;
 use crate::matchers::*;
 use crate::nfa::NFA;
 use crate::tokens::*;
-use memchr::memmem::Finder;
 
 #[derive(Clone)]
 enum PreFilter {
