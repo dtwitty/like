@@ -101,6 +101,7 @@ mod tests {
         assert!(!LikeMatcher::new("_").matches(""));
         assert!(LikeMatcher::new("_").matches("w"));
         assert!(!LikeMatcher::new("_").matches("he"));
+        assert!(!LikeMatcher::new("_").matches("🔥"));
         assert!(LikeMatcher::new("_______________________").matches("aaaaaaaaaaaaaaaaaaaaaaa"));
         assert!(LikeMatcher::new("h_llo").matches("hello"));
         assert!(!LikeMatcher::new("h_llo").matches("world"));
