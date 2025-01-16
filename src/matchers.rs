@@ -1,6 +1,7 @@
 use crate::patterns::{Pattern, Patterns};
 use memchr::memmem::Finder;
 use std::fmt::{Debug, Display, Formatter};
+use std::num::NonZeroUsize;
 use std::ops::Deref;
 
 #[derive(Clone)]
@@ -21,7 +22,7 @@ pub enum TerminalMatcher {
     Equals(String),
     EqualsChar(char),
     /// Consume the entire string if it has the given length.
-    Len(usize),
+    Len(NonZeroUsize),
 }
 
 impl Debug for TerminalMatcher {
@@ -76,16 +77,10 @@ impl TerminalMatcher {
                     false
                 }
             }
+
             Len(n) => {
-                if let Some(rem) = s
-                    .char_indices()
-                    .nth(*n - 1)
-                    .map(|(i, c)| unsafe { s.get_unchecked(i + c.len_utf8()..) })
-                {
-                    rem.is_empty()
-                } else {
-                    false
-                }
+                let mut chars = s.chars();
+                chars.nth(n.get() - 1).is_some() && chars.next().is_none()
             }
         }
     }
@@ -99,7 +94,7 @@ pub enum MedialMatcher {
     /// Consume any number of characters and match a literal.
     SkipToLiteral(Finder<'static>),
     /// Consume exactly the given number of characters.
-    Exactly(usize),
+    Exactly(NonZeroUsize),
 }
 
 impl MedialMatcher {
@@ -128,10 +123,16 @@ impl MedialMatcher {
                 .find(s.as_bytes())
                 .map(|pos| unsafe { s.get_unchecked(pos + finder.needle().len()..) }),
 
-            Exactly(n) => s
-                .char_indices()
-                .nth(*n - 1)
-                .map(|(i, c)| &s[i + c.len_utf8()..]),
+            Exactly(n) if n.get() == 1 => {
+                let mut chars = s.chars();
+                chars.next().map(|_| chars.as_str())
+            }
+
+            Exactly(n) => {
+                let mut chars = s.chars();
+                chars.nth(n.get())?;
+                Some(chars.as_str())
+            }
         }
     }
 }
@@ -201,7 +202,7 @@ impl Matcher {
                 }
             }
 
-            Len(n) => Matcher::Terminal(TerminalMatcher::Len(n)),
+            Len(n) => Matcher::Terminal(TerminalMatcher::Len(NonZeroUsize::try_from(n).unwrap())),
 
             Literal(s) => {
                 if s.chars().count() == 1 {
@@ -215,7 +216,9 @@ impl Matcher {
                 Finder::new(s.as_bytes()).into_owned(),
             )),
 
-            Exactly(n) => Matcher::Medial(MedialMatcher::Exactly(n)),
+            Exactly(n) => {
+                Matcher::Medial(MedialMatcher::Exactly(NonZeroUsize::try_from(n).unwrap()))
+            }
 
             AtLeast(_) => panic!("AtLeast should have been optimized away"),
         }

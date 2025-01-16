@@ -16,6 +16,7 @@ bit-set = "0.8.0"
 memchr = "2.7.4"
 rustc-hash = "2.1.0"
 clap = { version = "4.5.18", features = ["derive"] }
+bytecount = "0.6.8"
 
 [dev-dependencies]
 proptest = "1.6.0"

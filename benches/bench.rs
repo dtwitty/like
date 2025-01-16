@@ -34,17 +34,17 @@ impl RegexLikeMatcher {
 
 fn patterns_and_inputs() -> &'static [(&'static str, &'static str)] {
     &[
-        ("exact-match", "exact-match"),
+        ("_x_", "this is a long string"),
         ("________", "aaa"),
         ("________", "aaaaaaaa"),
         ("________", "aaaaaaaaaaaaaaaa"),
+        ("exact-match", "exact-match"),
         ("%a%", "abc"),
         ("_b_", "abc"),
         ("a_c", "abc"),
         ("x_y", "abc"),
         ("%hello%", "this is a hello world example"),
         ("_h_llo", "oh hello there"),
-        ("_x_", "this is a long string"),
         ("%abc", "1234567890abcdefghijklmnopqrstuvwxyz"),
         ("a%very_long_pattern_that_does_not_match", "short"),
         ("%short_text", "short_text"),
