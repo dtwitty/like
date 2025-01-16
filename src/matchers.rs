@@ -77,13 +77,15 @@ impl TerminalMatcher {
                 }
             }
             Len(n) => {
-                let mut chars = s.chars();
-                for _ in 0..*n {
-                    if chars.next().is_none() {
-                        return false;
-                    }
+                if let Some(rem) = s
+                    .char_indices()
+                    .nth(*n - 1)
+                    .map(|(i, c)| unsafe { s.get_unchecked(i + c.len_utf8()..) })
+                {
+                    rem.is_empty()
+                } else {
+                    false
                 }
-                chars.next().is_none()
             }
         }
     }
@@ -126,9 +128,10 @@ impl MedialMatcher {
                 .find(s.as_bytes())
                 .map(|pos| unsafe { s.get_unchecked(pos + finder.needle().len()..) }),
 
-            Exactly(n) => {
-                s.char_indices().nth(*n - 1).map(|(i, c)| &s[i + c.len_utf8()..])
-            }
+            Exactly(n) => s
+                .char_indices()
+                .nth(*n - 1)
+                .map(|(i, c)| &s[i + c.len_utf8()..]),
         }
     }
 }

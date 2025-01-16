@@ -2,7 +2,7 @@ pub mod matchers;
 pub mod patterns;
 pub mod tokens;
 
-use crate::matchers::{Matcher, Matchers, TerminalMatcher};
+use crate::matchers::Matchers;
 use crate::patterns::*;
 use crate::tokens::*;
 
@@ -16,9 +16,7 @@ impl LikeMatcher {
         let tokens = Tokens::from_str(s);
         let patterns = Patterns::from_tokens(tokens).optimize();
         let matchers = Matchers::from_patterns(patterns);
-        LikeMatcher {
-            matchers,
-        }
+        LikeMatcher { matchers }
     }
 
     pub fn matches(&self, input: &str) -> bool {
