@@ -7,32 +7,7 @@ use crate::patterns::*;
 use crate::tokens::*;
 
 #[derive(Clone)]
-enum PreFilter {
-    EndsWith(String),
-}
-
-impl PreFilter {
-    fn matches(&self, s: &str) -> bool {
-        match self {
-            PreFilter::EndsWith(suffix) => s.ends_with(suffix),
-        }
-    }
-}
-
-fn get_prefilters(matchers: &Matchers) -> Vec<PreFilter> {
-    use Matcher::*;
-    use TerminalMatcher::*;
-    match &matchers[..] {
-        // For these, we want there to be more than 1 matcher, otherwise we are just repeating work.
-        [.., _, Terminal(EndsWith(s))] => vec![PreFilter::EndsWith(s.to_string())],
-        [.., _, Terminal(Equals(s))] => vec![PreFilter::EndsWith(s.to_string())],
-        _ => vec![],
-    }
-}
-
-#[derive(Clone)]
 pub struct LikeMatcher {
-    prefilters: Vec<PreFilter>,
     matchers: Matchers,
 }
 
@@ -41,15 +16,13 @@ impl LikeMatcher {
         let tokens = Tokens::from_str(s);
         let patterns = Patterns::from_tokens(tokens).optimize();
         let matchers = Matchers::from_patterns(patterns);
-        let prefilters = get_prefilters(&matchers);
         LikeMatcher {
-            prefilters,
             matchers,
         }
     }
 
     pub fn matches(&self, input: &str) -> bool {
-        self.prefilters.iter().all(|p| p.matches(input)) && self.matchers.matches(input)
+        self.matchers.matches(input)
     }
 }
 

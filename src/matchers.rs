@@ -11,12 +11,15 @@ pub enum TerminalMatcher {
     End,
     /// Consume the entire string if it starts with the given prefix.
     StartsWith(String),
+    StartsWithChar(char),
     /// Consume the entire string if it ends with the given suffix.
     EndsWith(String),
+    EndsWithChar(char),
     /// Consume the entire string if it contains the given substring.
     Contains(Finder<'static>),
     /// Consume the entire string if it equals the given string.
     Equals(String),
+    EqualsChar(char),
     /// Consume the entire string if it has the given length.
     Len(usize),
 }
@@ -28,7 +31,9 @@ impl Debug for TerminalMatcher {
             All => write!(f, "All"),
             End => write!(f, "End"),
             StartsWith(prefix) => write!(f, "StartsWith(\"{}\")", prefix),
+            StartsWithChar(c) => write!(f, "StartsWithChar('{}')", c),
             EndsWith(suffix) => write!(f, "EndsWith(\"{}\")", suffix),
+            EndsWithChar(c) => write!(f, "EndsWithChar('{}')", c),
             Contains(finder) => {
                 write!(
                     f,
@@ -37,6 +42,7 @@ impl Debug for TerminalMatcher {
                 )
             }
             Equals(s) => write!(f, "Equals(\"{}\")", s),
+            EqualsChar(c) => write!(f, "EqualsChar('{}')", c),
             Len(n) => write!(f, "Len({})", n),
         }
     }
@@ -55,10 +61,30 @@ impl TerminalMatcher {
             All => true,
             End => s.is_empty(),
             StartsWith(prefix) => s.starts_with(prefix),
+            StartsWithChar(c) => s.chars().next().map_or(false, |d| d == *c),
             EndsWith(suffix) => s.ends_with(suffix),
+            EndsWithChar(c) => s.chars().next_back().map_or(false, |d| d == *c),
             Contains(finder) => finder.find(s.as_bytes()).is_some(),
             Equals(s2) => s == s2,
-            Len(n) => s.chars().count() == *n,
+            EqualsChar(c) => {
+                let mut chars = s.chars();
+                if let Some(first) = chars.next() {
+                    // Needs to match and there must be no other character.
+                    first == *c && chars.next().is_none()
+                } else {
+                    // No first character.
+                    false
+                }
+            }
+            Len(n) => {
+                let mut chars = s.chars();
+                for _ in 0..*n {
+                    if chars.next().is_none() {
+                        return false;
+                    }
+                }
+                chars.next().is_none()
+            }
         }
     }
 }
@@ -67,6 +93,7 @@ impl TerminalMatcher {
 pub enum MedialMatcher {
     /// Consume a literal string.
     Literal(String),
+    LiteralChar(char),
     /// Consume any number of characters and match a literal.
     SkipToLiteral(Finder<'static>),
     /// Consume exactly the given number of characters.
@@ -85,14 +112,22 @@ impl MedialMatcher {
                 }
             }
 
-            SkipToLiteral(finder) => finder.find(s.as_bytes()).map(|pos| &s[pos..]),
+            LiteralChar(c) => {
+                let mut chars = s.chars();
+                let d = chars.next()?;
+                if d == *c {
+                    Some(chars.as_str())
+                } else {
+                    None
+                }
+            }
+
+            SkipToLiteral(finder) => finder
+                .find(s.as_bytes())
+                .map(|pos| unsafe { s.get_unchecked(pos + finder.needle().len()..) }),
 
             Exactly(n) => {
-                let mut chars = s.chars();
-                for _ in 0..*n {
-                    chars.next()?;
-                }
-                Some(chars.as_str())
+                s.char_indices().nth(*n - 1).map(|(i, c)| &s[i + c.len_utf8()..])
             }
         }
     }
@@ -103,6 +138,7 @@ impl Debug for MedialMatcher {
         use MedialMatcher::*;
         match self {
             Literal(s) => write!(f, "Literal(\"{}\")", s),
+            LiteralChar(c) => write!(f, "LiteralChar('{}')", c),
             SkipToLiteral(finder) => write!(
                 f,
                 "SkipToLiteral(\"{}\")",
@@ -131,19 +167,53 @@ impl Matcher {
 
         match p {
             All => Matcher::Terminal(TerminalMatcher::All),
+
             End => Matcher::Terminal(TerminalMatcher::End),
-            StartsWith(s) => Matcher::Terminal(TerminalMatcher::StartsWith(s.to_string())),
-            EndsWith(s) => Matcher::Terminal(TerminalMatcher::EndsWith(s.to_string())),
+
+            StartsWith(s) => {
+                if s.chars().count() == 1 {
+                    Matcher::Terminal(TerminalMatcher::StartsWithChar(s.chars().next().unwrap()))
+                } else {
+                    Matcher::Terminal(TerminalMatcher::StartsWith(s.to_string()))
+                }
+            }
+
+            EndsWith(s) => {
+                if s.chars().count() == 1 {
+                    Matcher::Terminal(TerminalMatcher::EndsWithChar(s.chars().next().unwrap()))
+                } else {
+                    Matcher::Terminal(TerminalMatcher::EndsWith(s.to_string()))
+                }
+            }
+
             Contains(s) => Matcher::Terminal(TerminalMatcher::Contains(
                 Finder::new(s.as_bytes()).into_owned(),
             )),
-            Equals(s) => Matcher::Terminal(TerminalMatcher::Equals(s.to_string())),
+
+            Equals(s) => {
+                if s.chars().count() == 1 {
+                    Matcher::Terminal(TerminalMatcher::EqualsChar(s.chars().next().unwrap()))
+                } else {
+                    Matcher::Terminal(TerminalMatcher::Equals(s.to_string()))
+                }
+            }
+
             Len(n) => Matcher::Terminal(TerminalMatcher::Len(n)),
-            Literal(s) => Matcher::Medial(MedialMatcher::Literal(s.to_string())),
+
+            Literal(s) => {
+                if s.chars().count() == 1 {
+                    Matcher::Medial(MedialMatcher::LiteralChar(s.chars().next().unwrap()))
+                } else {
+                    Matcher::Medial(MedialMatcher::Literal(s.to_string()))
+                }
+            }
+
             SkipToLiteral(s) => Matcher::Medial(MedialMatcher::SkipToLiteral(
                 Finder::new(s.as_bytes()).into_owned(),
             )),
+
             Exactly(n) => Matcher::Medial(MedialMatcher::Exactly(n)),
+
             AtLeast(_) => panic!("AtLeast should have been optimized away"),
         }
     }
