@@ -42,6 +42,12 @@ impl<'a> Deref for Tokens<'a> {
     }
 }
 
+impl <'a> FromIterator<Token<'a>> for Tokens<'a> {
+    fn from_iter<T: IntoIterator<Item = Token<'a>>>(iter: T) -> Self {
+        Self(iter.into_iter().collect())
+    }
+}
+
 /// Lexes a LIKE pattern into tokens. Never fails because all strings are valid patterns.
 fn lex(input: &str) -> Tokens {
     let mut tokens = Vec::new();
