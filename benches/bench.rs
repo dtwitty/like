@@ -34,6 +34,18 @@ impl RegexLikeMatcher {
 
 fn patterns_and_inputs() -> &'static [(&'static str, &'static str)] {
     &[
+        (
+            "%1%22%333%4444%",
+            "a super long text that contains an example of the given pattern, which starts with a \
+            1, then is followed by a 22, later is continued with a 3333, and finally a 4444 before \
+            continuing on for some arbitrarily long number of characters.",
+        ),
+        (
+            "%1%22%333%4444%",
+            "a super long text that does not match the given pattern, which starts with a 1, then \
+            is followed by a 22, later is continued with a 3333, and but has only 444 before \
+            continuing on for some arbitrarily long number of characters.",
+        ),
         ("_x_", "this is a long string"),
         ("________", "aaa"),
         ("________", "aaaaaaaa"),
