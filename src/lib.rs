@@ -51,7 +51,7 @@
 //! to search.
 //!
 //! ## Reliability
-//! All strings are valid `LIKE` patterns. Therefore, parsing can never fail.
+//! All utf-8 strings are valid `LIKE` patterns. Therefore, parsing can never fail.
 //! This crate is also tested against a regex-based implementation to ensure correctness.
 //! It uses fuzz testing to ensure that it can handle any well-formed `&str`.
 //!
