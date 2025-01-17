@@ -1,3 +1,75 @@
+//! A pattern matcher inspired by the SQL `LIKE` operator.
+//!
+//! # Syntax
+//! A `LIKE` pattern is composed of:
+//!  - `%`: Matches any sequence of characters, including an empty sequence.
+//!  - `_`: Matches any single character (a Unicode scalar value).
+//!  - Literal strings
+//!  - Escaped characters:
+//!     - `"\\"` escapes a backslash, matching a single backslash/
+//!     - `"\_"` escapes an underscore, matching a single underscore.
+//!     - `"\%"` escapes a percent sign, matching a single percent sign.
+//!     - Any other escaped character matches both the backslash and the character.
+//!         - For example, `"\a"` matches a backslash followed by an `'a'`.
+//!
+//! ## Examples
+//! For example:
+//! - `"hello%"` matches any string that starts with "hello".
+//! - `"%world"` matches any string that ends with "world".
+//! - `"%hello%"` matches any string that contains "hello".
+//! - `"hello"` matches the string "hello".
+//! - `"%____"` matches any string that is at least 4 characters long.
+//! - `"a_b"` matches the `"a"`, followed by any character, followed by `"b"`.
+//! - `"a\\_b"` matches the string `"a_b"`.
+//!
+//! # Why not Regex?
+//! You could certainly implement `LIKE`-style matching using the excellent
+//! [`regex`](https://docs.rs/regex/latest/regex/) crate, and that will probably meet your needs.
+//! That crate is much more flexible than this one.
+//! However, there are a few reasons you might want to use this crate instead:
+//!
+//! ## Performance
+//! The matching algorithm for compiled matchers is `O(n + m)` where `n` is the length (in chars) of
+//! the string to match, and `m` is the length (in chars) of the pattern. Because `LIKE` patterns are
+//! much simpler than regular expressions, we can use highly optimized routines from the
+//! [`memchr`](https://docs.rs/memchr/latest/memchr/) crate to quickly scan the input string.
+//!
+//! There are also optimizations available for common patterns. For example:
+//!  - `"%world" simply checks the end of the input string
+//! - `"hello%"` simply checks the start of the input string
+//! - `"%hello%"` simply checks if the input string contains "hello"
+//! - `"hello"` simply checks if the input string is equal to "hello"
+//! - and many more!
+//!
+//!
+//! ## Transparency
+//! This crate exposes its tokenizer, which allows building and accessing the parts of a pattern.
+//! This allows building token patterns without needing to construct the actual pattern string,
+//! making escaping and concatenation trivial.
+//!
+//! Having access to parsed tokens also allows optimizations for the caller. For example, database
+//! engines that use a sorted index can look at the first token to narrow down the part of the index
+//! to search.
+//!
+//! ## Reliability
+//! All strings are valid `LIKE` patterns. Therefore, no input validation is needed.
+//! This crate is also tested against a regex-based implementation to ensure correctness.
+//! It uses fuzz testing to ensure that it can handle any valid input, and that the matching
+//! algorithm is correct.
+//!
+//! # How It Works
+//! First, you compile a `LikeMatcher`. This involves the following steps:
+//! 1. Tokenize the pattern string, or use the supplied set of tokens.
+//! 2. Transform the tokens to an intermediate representation (IR) for optimization.
+//! 3. Apply optimizations to the IR, for example:
+//!     - `"...%abc%..."` becomes "skip to the next `"abc"`"
+//!     - "...%" becomes "skip to the end"
+//! 4. Transform the optimized IR to highly optimized substring matchers.
+//!
+//! Once you have a compiled `LikeMatcher`, you can use it to match strings.
+//! The matcher is completely thread safe, though it is not cheap to clone.
+//!
+//!
 pub mod matchers;
 pub mod patterns;
 pub mod tokens;
