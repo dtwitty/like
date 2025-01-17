@@ -35,12 +35,11 @@
 //! [`memchr`](https://docs.rs/memchr/latest/memchr/) crate to quickly scan the input string.
 //!
 //! There are also optimizations available for common patterns. For example:
-//!  - `"%world" simply checks the end of the input string
-//! - `"hello%"` simply checks the start of the input string
-//! - `"%hello%"` simply checks if the input string contains "hello"
-//! - `"hello"` simply checks if the input string is equal to "hello"
+//!  - `"%world"` checks the end of the input string.
+//! - `"hello%"` checks the start of the input string.
+//! - `"%hello%"` checks if the input string contains `"hello"`.
+//! - `"hello"` checks if the input string is equal to `"hello"`.
 //! - and many more!
-//!
 //!
 //! ## Transparency
 //! This crate exposes its tokenizer, which allows building and accessing the parts of a pattern.
@@ -52,24 +51,21 @@
 //! to search.
 //!
 //! ## Reliability
-//! All strings are valid `LIKE` patterns. Therefore, no input validation is needed.
+//! All strings are valid `LIKE` patterns. Therefore, parsing can never fail.
 //! This crate is also tested against a regex-based implementation to ensure correctness.
-//! It uses fuzz testing to ensure that it can handle any valid input, and that the matching
-//! algorithm is correct.
+//! It uses fuzz testing to ensure that it can handle any well-formed `&str`.
 //!
 //! # How It Works
-//! First, you compile a `LikeMatcher`. This involves the following steps:
+//! First, you compile a `LikeMatcher`. Behind the scenes, this will:
 //! 1. Tokenize the pattern string, or use the supplied set of tokens.
 //! 2. Transform the tokens to an intermediate representation (IR) for optimization.
 //! 3. Apply optimizations to the IR, for example:
-//!     - `"...%abc%..."` becomes "skip to the next `"abc"`"
-//!     - "...%" becomes "skip to the end"
+//!     - `"...%abc..."` becomes "skip to the next `"abc"`"
+//!     - `"...%"` becomes "skip to the end"
 //! 4. Transform the optimized IR to highly optimized substring matchers.
 //!
 //! Once you have a compiled `LikeMatcher`, you can use it to match strings.
 //! The matcher is completely thread safe, though it is not cheap to clone.
-//!
-//!
 pub mod matchers;
 pub mod patterns;
 pub mod tokens;
