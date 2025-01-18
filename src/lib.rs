@@ -41,6 +41,9 @@
 //! - `"hello"` checks if the input string is equal to `"hello"`.
 //! - and many more!
 //!
+//! Finally, a `LikeMatcher` instance is often 10-100x faster to compile than a `Regex`. This may be
+//! beneficial in applications where you need to compile many patterns dynamically.
+//!
 //! ## Transparency
 //! This crate exposes its tokenizer, which allows building and accessing the parts of a pattern.
 //! This allows building token patterns without needing to construct the actual pattern string,
@@ -66,15 +69,15 @@
 //!
 //! Once you have a compiled `LikeMatcher`, you can use it to match strings.
 //! The matcher is completely thread safe, though it is not cheap to clone.
-pub mod matchers;
-pub mod patterns;
+mod matchers;
+mod patterns;
 pub mod tokens;
 
 use crate::matchers::Matchers;
 use crate::patterns::*;
 use crate::tokens::*;
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct LikeMatcher {
     matchers: Matchers,
 }
@@ -82,8 +85,8 @@ pub struct LikeMatcher {
 impl LikeMatcher {
     pub fn new(s: &str) -> LikeMatcher {
         let tokens = Tokens::from_str(s);
-        let patterns = Patterns::from_tokens(tokens).optimize();
-        let matchers = Matchers::from_patterns(patterns);
+        let patterns = Patterns::from_tokens(&tokens).optimize();
+        let matchers = Matchers::from_patterns(&patterns);
         LikeMatcher { matchers }
     }
 

@@ -1,11 +1,10 @@
 use crate::tokens::{Token, Tokens};
 use std::borrow::Cow;
-use std::fmt::{Debug, Display, Formatter};
 use std::ops::Deref;
 
 /// Matching units that can non-deterministically consume characters from a string.
-#[derive(Clone, PartialEq, Eq)]
-pub enum Pattern<'a> {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Pattern<'a> {
     /// Consume a literal string.
     Literal(Cow<'a, str>),
     /// Consume any number of characters and match a literal.
@@ -30,31 +29,6 @@ pub enum Pattern<'a> {
     Len(usize),
 }
 
-impl<'a> Debug for Pattern<'a> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        use Pattern::*;
-        match self {
-            Literal(s) => write!(f, "Literal(\"{}\")", s),
-            SkipToLiteral(s) => write!(f, "SkipToLiteral(\"{}\")", s),
-            AtLeast(n) => write!(f, "AtLeast({})", n),
-            Exactly(n) => write!(f, "Exactly({})", n),
-            End => write!(f, "End"),
-            All => write!(f, "All"),
-            StartsWith(s) => write!(f, "StartsWith(\"{}\")", s),
-            EndsWith(s) => write!(f, "EndsWith(\"{}\")", s),
-            Contains(s) => write!(f, "Contains(\"{}\")", s),
-            Equals(s) => write!(f, "Equals(\"{}\")", s),
-            Len(n) => write!(f, "Len({})", n),
-        }
-    }
-}
-
-impl<'a> Display for Pattern<'a> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}", self)
-    }
-}
-
 impl<'a> Pattern<'a> {
     #[cfg(test)]
     pub fn is_terminal(&self) -> bool {
@@ -70,13 +44,7 @@ impl<'a> Pattern<'a> {
 /// This can be thought of as the "Intermediate Representation" (IR) of the matching engine.
 /// We run optimizations on it to reduce the search space during matching.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Patterns<'a>(Vec<Pattern<'a>>);
-
-impl<'a> Display for Patterns<'a> {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}", self)
-    }
-}
+pub(crate) struct Patterns<'a>(Vec<Pattern<'a>>);
 
 impl<'a> Deref for Patterns<'a> {
     type Target = [Pattern<'a>];
@@ -86,17 +54,11 @@ impl<'a> Deref for Patterns<'a> {
     }
 }
 
-impl<'a> From<Patterns<'a>> for Vec<Pattern<'a>> {
-    fn from(value: Patterns<'a>) -> Self {
-        value.0
-    }
-}
-
 impl<'a> Patterns<'a> {
-    pub fn from_tokens(tokens: Tokens<'a>) -> Patterns<'a> {
-        let mut v = Vec::new();
+    pub fn from_tokens(tokens: &Tokens<'a>) -> Patterns<'a> {
+        let mut v = Vec::with_capacity(tokens.len());
 
-        v.extend(tokens.into_iter().map(|token| match token {
+        v.extend(tokens.iter().map(|token| match token {
             Token::Literal(s) => Pattern::Literal(Cow::Borrowed(s)),
             Token::Any => Pattern::AtLeast(0),
             Token::Single => Pattern::Exactly(1),
@@ -112,230 +74,275 @@ impl<'a> Patterns<'a> {
     }
 
     pub fn optimize(self) -> Self {
+        let mut next_vec = Vec::with_capacity(self.len());
         let mut curr = self;
         loop {
-            match curr.optimize_one() {
-                Ok(ir) => curr = ir,
-                Err(ir) => return ir,
+            match curr.optimize_one(next_vec) {
+                (Ok(patterns), mut v) => {
+                    curr = patterns;
+                    v.clear();
+                    next_vec = v;
+                }
+                (Err(patterns), _) => return patterns,
             }
         }
     }
 
-    fn optimize_one(self) -> Result<Self, Self> {
+    fn optimize_one(
+        mut self,
+        mut next_vec: Vec<Pattern<'a>>,
+    ) -> (Result<Self, Self>, Vec<Pattern<'a>>) {
         use Pattern::*;
-        let mut v = Vec::new();
+
+        if self.0.is_empty() {
+            return (Err(Patterns(self.0)), next_vec);
+        }
+
         let mut changed = false;
 
-        let mut i = 0;
-        while i + 1 < self.len() {
-            let a = &self[i];
-            let b = &self[i + 1];
+        let mut it = self.0.drain(..).peekable();
+        while let Some(a) = it.next() {
+            let b = it.peek();
+            if b.is_none() {
+                next_vec.push(a);
+                break;
+            }
+            let b = b.unwrap();
 
             match (a, b) {
                 // Remove empty literals.
                 (Literal(s), _) if s.is_empty() => {
-                    i += 1;
+                    it.next();
                     changed = true;
                 }
 
                 // Remove empty character counters.
                 (Exactly(0), _) => {
-                    i += 1;
+                    it.next();
                     changed = true;
                 }
 
                 (Len(0), _) => {
-                    v.push(End);
-                    i += 1;
+                    next_vec.push(End);
+                    it.next();
                     changed = true;
                 }
 
                 // Remove empty "skip to literal".
                 (SkipToLiteral(s), _) if s.is_empty() => {
-                    i += 1;
+                    it.next();
                     changed = true;
                 }
 
                 // Combine adjacent literals.
                 // Escaping can cause literals to be split during Tokens::from_string.
-                (Literal(ref a), Literal(ref b)) => {
-                    let a = a.clone();
-                    let b = b.clone();
-                    let c = Cow::Owned(a.to_string() + b.deref());
-                    v.push(Literal(c));
-                    i += 1;
+                (Literal(a), Literal(_)) => {
+                    let Some(Literal(b)) = it.next() else {
+                        unreachable!()
+                    };
+                    let mut a = a.into_owned();
+                    a.push_str(&b.into_owned());
+                    let c = Cow::Owned(a);
+                    next_vec.push(Literal(c));
                     changed = true;
                 }
 
                 // Combine adjacent "skip to literal" and literal.
-                (SkipToLiteral(ref a), Literal(ref b)) => {
-                    let a = a.clone();
-                    let b = b.clone();
-                    let c = Cow::Owned(a.to_string() + b.deref());
-                    v.push(SkipToLiteral(c));
-                    i += 1;
+                (SkipToLiteral(a), Literal(_)) => {
+                    let Some(Literal(b)) = it.next() else {
+                        unreachable!()
+                    };
+                    let mut a = a.into_owned();
+                    a.push_str(&b.into_owned());
+                    let c = Cow::Owned(a);
+                    next_vec.push(SkipToLiteral(c));
                     changed = true;
                 }
 
                 // Combine "at least" and literal to make "skip to literal".
                 // This allows us to use highly-optimized substring search algorithms.
-                (AtLeast(a), Literal(s) | SkipToLiteral(s)) => {
-                    if *a > 0 {
-                        v.push(Exactly(*a));
+                (AtLeast(a), Literal(_) | SkipToLiteral(_)) => {
+                    if a > 0 {
+                        next_vec.push(Exactly(a));
                     }
-                    v.push(SkipToLiteral(s.clone()));
-                    i += 1;
+                    let Some(SkipToLiteral(b) | Literal(b)) = it.next() else {
+                        unreachable!()
+                    };
+                    next_vec.push(SkipToLiteral(b));
                     changed = true;
                 }
 
                 // Combine character counters like "___" into a single pattern.
                 (Exactly(a), Exactly(b)) => {
-                    v.push(Exactly(a + b));
-                    i += 1;
+                    next_vec.push(Exactly(a + b));
+                    it.next();
                     changed = true;
                 }
 
                 // Combine any combination of "at least" and "exactly" counters.
-                (AtLeast(a), Exactly(b)) | (AtLeast(a), AtLeast(b)) | (Exactly(b), AtLeast(a)) => {
-                    v.push(AtLeast(a + b));
-                    i += 1;
+                (AtLeast(a), Exactly(b)) | (AtLeast(a), AtLeast(b)) | (Exactly(a), AtLeast(b)) => {
+                    next_vec.push(AtLeast(a + b));
+                    it.next();
                     changed = true;
                 }
 
                 (AtLeast(a), Len(b)) => {
-                    v.push(Exactly(*a + *b));
-                    v.push(All);
-                    i += 1;
+                    next_vec.push(Exactly(a + *b));
+                    next_vec.push(All);
+                    it.next();
                     changed = true;
                 }
 
                 // Optimizes for "match any ending" patterns like "hello%".
                 (AtLeast(a), All | End) => {
-                    if *a > 0 {
-                        v.push(Exactly(*a));
+                    if a > 0 {
+                        next_vec.push(Exactly(a));
                     }
-                    v.push(All);
-                    i += 1;
+                    next_vec.push(All);
+                    it.next();
                     changed = true;
                 }
 
-                (AtLeast(a), Equals(s)) => {
-                    if *a > 0 {
-                        v.push(Exactly(*a));
+                (AtLeast(a), Equals(_)) => {
+                    if a > 0 {
+                        next_vec.push(Exactly(a));
                     }
-                    v.push(EndsWith(s.clone()));
-                    i += 1;
+                    let Some(Equals(s)) = it.next() else {
+                        unreachable!()
+                    };
+                    next_vec.push(EndsWith(s));
                     changed = true;
                 }
 
-                (AtLeast(a), Contains(s)) => {
-                    if *a > 0 {
-                        v.push(Exactly(*a));
+                (AtLeast(a), Contains(_)) => {
+                    if a > 0 {
+                        next_vec.push(Exactly(a));
                     }
-                    v.push(Contains(s.clone()));
-                    i += 1;
+                    let Some(Contains(s)) = it.next() else {
+                        unreachable!()
+                    };
+                    next_vec.push(Contains(s));
                     changed = true;
                 }
 
-                (AtLeast(a), StartsWith(s)) => {
-                    if *a > 0 {
-                        v.push(Exactly(*a));
+                (AtLeast(a), StartsWith(_)) => {
+                    if a > 0 {
+                        next_vec.push(Exactly(a));
                     }
-                    v.push(Contains(s.clone()));
-                    i += 1;
+                    let Some(StartsWith(s)) = it.next() else {
+                        unreachable!()
+                    };
+                    next_vec.push(Contains(s));
                     changed = true;
                 }
 
-                (AtLeast(a), EndsWith(s)) => {
-                    if *a > 0 {
-                        v.push(Exactly(*a));
+                (AtLeast(a), EndsWith(_)) => {
+                    if a > 0 {
+                        next_vec.push(Exactly(a));
                     }
-                    v.push(EndsWith(s.clone()));
-                    i += 1;
+                    let Some(EndsWith(s)) = it.next() else {
+                        unreachable!()
+                    };
+                    next_vec.push(EndsWith(s.clone()));
                     changed = true;
                 }
 
                 (Literal(s), End) => {
-                    v.push(Equals(s.clone()));
-                    i += 1;
+                    next_vec.push(Equals(s));
+                    it.next();
                     changed = true;
                 }
 
                 (SkipToLiteral(s), End) => {
-                    v.push(EndsWith(s.clone()));
-                    i += 1;
+                    next_vec.push(EndsWith(s));
+                    it.next();
                     changed = true;
                 }
 
                 (Literal(s), All) => {
-                    v.push(StartsWith(s.clone()));
-                    i += 1;
+                    next_vec.push(StartsWith(s));
+                    it.next();
                     changed = true;
                 }
 
                 (SkipToLiteral(s), All) => {
-                    v.push(Contains(s.clone()));
-                    i += 1;
+                    next_vec.push(Contains(s));
+                    it.next();
                     changed = true;
                 }
 
-                (Literal(a), StartsWith(b)) => {
-                    v.push(StartsWith(Cow::Owned(a.to_string() + b.deref())));
-                    i += 1;
+                (Literal(a), StartsWith(_)) => {
+                    let mut a = a.into_owned();
+                    let Some(StartsWith(b)) = it.next() else {
+                        unreachable!()
+                    };
+                    a.push_str(b.deref());
+                    let c = Cow::Owned(a);
+                    next_vec.push(StartsWith(c));
                     changed = true;
                 }
 
-                (Literal(a), Equals(b)) => {
-                    v.push(Equals(Cow::Owned(a.to_string() + b.deref())));
-                    i += 1;
+                (Literal(a), Equals(_)) => {
+                    let mut a = a.into_owned();
+                    let Some(Equals(b)) = it.next() else {
+                        unreachable!()
+                    };
+                    a.push_str(b.deref());
+                    let c = Cow::Owned(a);
+                    next_vec.push(Equals(c));
                     changed = true;
                 }
 
-                (SkipToLiteral(a), StartsWith(b)) => {
-                    v.push(Contains(Cow::Owned(a.to_string() + b.deref())));
-                    i += 1;
+                (SkipToLiteral(a), StartsWith(_)) => {
+                    let mut a = a.into_owned();
+                    let Some(StartsWith(b)) = it.next() else {
+                        unreachable!()
+                    };
+                    a.push_str(b.deref());
+                    let c = Cow::Owned(a);
+                    next_vec.push(StartsWith(c));
                     changed = true;
                 }
 
-                (SkipToLiteral(a), Equals(b)) => {
-                    v.push(EndsWith(Cow::Owned(a.to_string() + b.deref())));
-                    i += 1;
+                (SkipToLiteral(a), Equals(_)) => {
+                    let mut a = a.into_owned();
+                    let Some(Equals(b)) = it.next() else {
+                        unreachable!()
+                    };
+                    a.push_str(b.deref());
+                    let c = Cow::Owned(a);
+                    next_vec.push(EndsWith(c));
                     changed = true;
                 }
 
                 (Exactly(a), End) => {
-                    v.push(Len(*a));
-                    i += 1;
+                    next_vec.push(Len(a));
+                    it.next();
                     changed = true;
                 }
 
                 (Exactly(a), Len(b)) => {
-                    v.push(Len(*a + *b));
-                    i += 1;
+                    next_vec.push(Len(a + *b));
+                    it.next();
                     changed = true;
                 }
 
                 (End | All | StartsWith(_) | EndsWith(_) | Contains(_) | Equals(_) | Len(_), _) => {
-                    unreachable!("{:?} should always be the last pattern", a);
+                    unreachable!("Terminal should always be the last pattern");
                 }
 
-                _ => {
-                    v.push(a.clone());
+                (a, _) => {
+                    next_vec.push(a);
                 }
             }
-
-            i += 1;
         }
 
-        if i < self.len() {
-            v.push(self[i].clone());
-        }
-
-        let ret = Patterns(v);
+        let ret = Patterns(next_vec);
+        drop(it);
         if changed {
-            Ok(ret)
+            (Ok(ret), self.0)
         } else {
-            Err(ret)
+            (Err(ret), self.0)
         }
     }
 }
@@ -349,14 +356,14 @@ mod tests {
     #[test]
     fn test_optimizations() {
         let tokens = Tokens::from_str("hello%");
-        let patterns = Patterns::from_tokens(tokens).optimize();
+        let patterns = Patterns::from_tokens(&tokens).optimize();
         assert_eq!(
             patterns,
             Patterns::from_vec(vec![StartsWith(Cow::Borrowed("hello"))])
         );
 
         let tokens = Tokens::from_str("hello%world");
-        let patterns = Patterns::from_tokens(tokens).optimize();
+        let patterns = Patterns::from_tokens(&tokens).optimize();
         assert_eq!(
             patterns,
             Patterns::from_vec(vec![
@@ -366,7 +373,7 @@ mod tests {
         );
 
         let tokens = Tokens::from_str("hello%world%");
-        let patterns = Patterns::from_tokens(tokens).optimize();
+        let patterns = Patterns::from_tokens(&tokens).optimize();
         assert_eq!(
             patterns,
             Patterns::from_vec(vec![
@@ -376,7 +383,7 @@ mod tests {
         );
 
         let tokens = Tokens::from_str("%hello%world");
-        let patterns = Patterns::from_tokens(tokens).optimize();
+        let patterns = Patterns::from_tokens(&tokens).optimize();
         assert_eq!(
             patterns,
             Patterns::from_vec(vec![
@@ -386,11 +393,11 @@ mod tests {
         );
 
         let tokens = Tokens::from_str("_%_%_");
-        let patterns = Patterns::from_tokens(tokens).optimize();
+        let patterns = Patterns::from_tokens(&tokens).optimize();
         assert_eq!(patterns, Patterns::from_vec(vec![Exactly(3), All]));
 
         let tokens = Tokens::from_str("a%b%c");
-        let patterns = Patterns::from_tokens(tokens).optimize();
+        let patterns = Patterns::from_tokens(&tokens).optimize();
         assert_eq!(
             patterns,
             Patterns::from_vec(vec![
@@ -401,11 +408,11 @@ mod tests {
         );
 
         let tokens = Tokens::from_str("");
-        let patterns = Patterns::from_tokens(tokens).optimize();
+        let patterns = Patterns::from_tokens(&tokens).optimize();
         assert_eq!(patterns, Patterns::from_vec(vec![End]));
 
         let tokens = Tokens::from_str("_");
-        let patterns = Patterns::from_tokens(tokens).optimize();
+        let patterns = Patterns::from_tokens(&tokens).optimize();
         assert_eq!(patterns, Patterns::from_vec(vec![Len(1)]));
     }
 
@@ -419,7 +426,7 @@ mod tests {
         #[test]
         fn test_invariants(pattern in ".*") {
             let tokens = Tokens::from_str(&pattern);
-            let patterns = Patterns::from_tokens(tokens).optimize();
+            let patterns = Patterns::from_tokens(&tokens).optimize();
 
             // The patterns should never be empty.
             assert!(!patterns.is_empty());

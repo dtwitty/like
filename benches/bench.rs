@@ -87,9 +87,11 @@ fn benchmark_construction(c: &mut Criterion) {
             b.iter(|| LikeMatcher::new(black_box(pattern)))
         });
 
+        /*
         group.bench_function(format!("RegexLikeMatcher(\"{pattern}\")"), |b| {
             b.iter(|| RegexLikeMatcher::new(black_box(pattern)))
         });
+         */
     }
 
     group.finish();
@@ -115,6 +117,6 @@ fn benchmark_matching(c: &mut Criterion) {
     group.finish();
 }
 
-//criterion_group!(construction, benchmark_construction);
-criterion_group!(matching, benchmark_matching);
-criterion_main!(matching);
+criterion_group!(construction, benchmark_construction);
+//criterion_group!(matching, benchmark_matching);
+criterion_main!(construction);

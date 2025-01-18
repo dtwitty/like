@@ -4,8 +4,8 @@ use std::fmt::{Debug, Display, Formatter};
 use std::num::NonZeroUsize;
 use std::ops::Deref;
 
-#[derive(Clone)]
-pub enum TerminalMatcher {
+#[derive(Debug, Clone)]
+pub(crate) enum TerminalMatcher {
     /// Consume the entire string.
     All,
     /// Consume the end of the string.
@@ -23,36 +23,6 @@ pub enum TerminalMatcher {
     EqualsChar(char),
     /// Consume the entire string if it has the given length.
     Len(NonZeroUsize),
-}
-
-impl Debug for TerminalMatcher {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        use TerminalMatcher::*;
-        match self {
-            All => write!(f, "All"),
-            End => write!(f, "End"),
-            StartsWith(prefix) => write!(f, "StartsWith(\"{}\")", prefix),
-            StartsWithChar(c) => write!(f, "StartsWithChar('{}')", c),
-            EndsWith(suffix) => write!(f, "EndsWith(\"{}\")", suffix),
-            EndsWithChar(c) => write!(f, "EndsWithChar('{}')", c),
-            Contains(finder) => {
-                write!(
-                    f,
-                    "Contains(\"{}\")",
-                    std::str::from_utf8(finder.needle()).unwrap()
-                )
-            }
-            Equals(s) => write!(f, "Equals(\"{}\")", s),
-            EqualsChar(c) => write!(f, "EqualsChar('{}')", c),
-            Len(n) => write!(f, "Len({})", n),
-        }
-    }
-}
-
-impl Display for TerminalMatcher {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}", self)
-    }
 }
 
 impl TerminalMatcher {
@@ -86,8 +56,8 @@ impl TerminalMatcher {
     }
 }
 
-#[derive(Clone)]
-pub enum MedialMatcher {
+#[derive(Debug, Clone)]
+pub(crate) enum MedialMatcher {
     /// Consume a literal string.
     Literal(String),
     LiteralChar(char),
@@ -137,36 +107,14 @@ impl MedialMatcher {
     }
 }
 
-impl Debug for MedialMatcher {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        use MedialMatcher::*;
-        match self {
-            Literal(s) => write!(f, "Literal(\"{}\")", s),
-            LiteralChar(c) => write!(f, "LiteralChar('{}')", c),
-            SkipToLiteral(finder) => write!(
-                f,
-                "SkipToLiteral(\"{}\")",
-                std::str::from_utf8(finder.needle()).unwrap()
-            ),
-            Exactly(n) => write!(f, "Exactly({})", n),
-        }
-    }
-}
-
-impl Display for MedialMatcher {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}", self)
-    }
-}
-
 #[derive(Debug, Clone)]
-pub enum Matcher {
+pub(crate) enum Matcher {
     Terminal(TerminalMatcher),
     Medial(MedialMatcher),
 }
 
 impl Matcher {
-    fn from_pattern(p: Pattern) -> Self {
+    fn from_pattern(p: &Pattern) -> Self {
         use Pattern::*;
 
         match p {
@@ -202,7 +150,7 @@ impl Matcher {
                 }
             }
 
-            Len(n) => Matcher::Terminal(TerminalMatcher::Len(NonZeroUsize::try_from(n).unwrap())),
+            Len(n) => Matcher::Terminal(TerminalMatcher::Len(NonZeroUsize::try_from(*n).unwrap())),
 
             Literal(s) => {
                 if s.chars().count() == 1 {
@@ -217,7 +165,7 @@ impl Matcher {
             )),
 
             Exactly(n) => {
-                Matcher::Medial(MedialMatcher::Exactly(NonZeroUsize::try_from(n).unwrap()))
+                Matcher::Medial(MedialMatcher::Exactly(NonZeroUsize::try_from(*n).unwrap()))
             }
 
             AtLeast(_) => panic!("AtLeast should have been optimized away"),
@@ -225,14 +173,8 @@ impl Matcher {
     }
 }
 
-impl Display for Matcher {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:?}", self)
-    }
-}
-
 #[derive(Debug, Clone)]
-pub struct Matchers(Vec<Matcher>);
+pub(crate) struct Matchers(Vec<Matcher>);
 
 impl Deref for Matchers {
     type Target = [Matcher];
@@ -243,18 +185,14 @@ impl Deref for Matchers {
 }
 
 impl Matchers {
-    pub fn from_patterns(p: Patterns) -> Self {
-        let patterns_vec: Vec<Pattern> = p.into();
-        let matchers = patterns_vec
-            .into_iter()
-            .map(Matcher::from_pattern)
-            .collect();
+    pub fn from_patterns(patterns: &Patterns) -> Self {
+        let matchers = patterns.iter().map(Matcher::from_pattern).collect();
         Matchers(matchers)
     }
 
     pub fn matches(&self, s: &str) -> bool {
         let mut s = s;
-        for m in &self[..] {
+        for m in self.iter() {
             match m {
                 Matcher::Terminal(tm) => {
                     return tm.matches(s);
