@@ -123,6 +123,7 @@ impl Matcher {
             End => Matcher::Terminal(TerminalMatcher::End),
 
             StartsWith(s) => {
+                let s = s.to_string();
                 if s.chars().count() == 1 {
                     Matcher::Terminal(TerminalMatcher::StartsWithChar(s.chars().next().unwrap()))
                 } else {
@@ -131,6 +132,7 @@ impl Matcher {
             }
 
             EndsWith(s) => {
+                let s = s.to_string();
                 if s.chars().count() == 1 {
                     Matcher::Terminal(TerminalMatcher::EndsWithChar(s.chars().next().unwrap()))
                 } else {
@@ -138,11 +140,15 @@ impl Matcher {
                 }
             }
 
-            Contains(s) => Matcher::Terminal(TerminalMatcher::Contains(
-                Finder::new(s.as_bytes()).into_owned(),
-            )),
+            Contains(s) => {
+                let s = s.to_string();
+                Matcher::Terminal(TerminalMatcher::Contains(
+                    Finder::new(s.as_bytes()).into_owned(),
+                ))
+            },
 
             Equals(s) => {
+                let s = s.to_string();
                 if s.chars().count() == 1 {
                     Matcher::Terminal(TerminalMatcher::EqualsChar(s.chars().next().unwrap()))
                 } else {
@@ -153,6 +159,7 @@ impl Matcher {
             Len(n) => Matcher::Terminal(TerminalMatcher::Len(NonZeroUsize::try_from(*n).unwrap())),
 
             Literal(s) => {
+                let s = s.to_string();
                 if s.chars().count() == 1 {
                     Matcher::Medial(MedialMatcher::LiteralChar(s.chars().next().unwrap()))
                 } else {
@@ -160,9 +167,12 @@ impl Matcher {
                 }
             }
 
-            SkipToLiteral(s) => Matcher::Medial(MedialMatcher::SkipToLiteral(
-                Finder::new(s.as_bytes()).into_owned(),
-            )),
+            SkipToLiteral(s) => {
+                let s = s.to_string();
+                Matcher::Medial(MedialMatcher::SkipToLiteral(
+                    Finder::new(s.as_bytes()).into_owned(),
+                ))
+            },
 
             Exactly(n) => {
                 Matcher::Medial(MedialMatcher::Exactly(NonZeroUsize::try_from(*n).unwrap()))

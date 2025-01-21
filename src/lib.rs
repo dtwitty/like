@@ -72,6 +72,7 @@
 mod matchers;
 mod patterns;
 pub mod tokens;
+mod cat;
 
 use crate::matchers::Matchers;
 use crate::patterns::*;

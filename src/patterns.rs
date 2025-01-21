@@ -1,14 +1,17 @@
+use crate::cat::Cat;
+use crate::patterns::Pattern::{
+    All, AtLeast, Contains, End, EndsWith, Equals, Exactly, Len, Literal, SkipToLiteral, StartsWith,
+};
 use crate::tokens::{Token, Tokens};
-use std::borrow::Cow;
 use std::ops::Deref;
 
 /// Matching units that can non-deterministically consume characters from a string.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Pattern<'a> {
     /// Consume a literal string.
-    Literal(Cow<'a, str>),
+    Literal(Cat<'a>),
     /// Consume any number of characters and match a literal.
-    SkipToLiteral(Cow<'a, str>),
+    SkipToLiteral(Cat<'a>),
     /// Consume any character, at least the given number of times.
     AtLeast(usize),
     /// Consume exactly the given number of characters.
@@ -18,15 +21,24 @@ pub(crate) enum Pattern<'a> {
     /// Consume the entire string.
     All,
     /// Consume the entire string if it starts with the given prefix.
-    StartsWith(Cow<'a, str>),
+    StartsWith(Cat<'a>),
     /// Consume the entire string if it ends with the given suffix.
-    EndsWith(Cow<'a, str>),
+    EndsWith(Cat<'a>),
     /// Consume the entire string if it contains the given substring.
-    Contains(Cow<'a, str>),
+    Contains(Cat<'a>),
     /// Consume the entire string if it equals the given string.
-    Equals(Cow<'a, str>),
+    Equals(Cat<'a>),
     /// Consume the entire string if it has the given length.
     Len(usize),
+}
+
+pub(crate) enum MergeResult<'a> {
+    /// Nothing changed, both patterns returned.
+    Nothing(Pattern<'a>, Pattern<'a>),
+    /// The 2 potterns were merged into 1.
+    Merged(Pattern<'a>),
+    /// Both patterns were changed and returned.
+    Transformed(Pattern<'a>, Pattern<'a>),
 }
 
 impl<'a> Pattern<'a> {
@@ -36,6 +48,126 @@ impl<'a> Pattern<'a> {
         match self {
             End | All | StartsWith(_) | EndsWith(_) | Contains(_) | Equals(_) | Len(_) => true,
             _ => false,
+        }
+    }
+
+    /// Merges this pattern with another one.
+    /// Returns the number of patterns that were consumed.
+    pub fn merge_with(self, other: Pattern<'a>) -> MergeResult<'a> {
+        use MergeResult::*;
+
+        match (self, other) {
+            // Combine adjacent literals.
+            // Escaping can cause literals to be split during Tokens::from_string.
+            (Literal(mut a), Literal(b)) => {
+                a.merge_with(b);
+                Merged(Literal(a))
+            }
+
+            // Combine adjacent "skip to literal" and literal.
+            (SkipToLiteral(mut a), Literal(b)) => {
+                a.merge_with(b);
+                Merged(SkipToLiteral(a))
+            }
+
+            // Combine "at least" and literal to make "skip to literal".
+            // This allows us to use highly-optimized substring search algorithms.
+            (AtLeast(a), Literal(b) | SkipToLiteral(b)) => {
+                if a == 0 {
+                    Merged(SkipToLiteral(b))
+                } else {
+                    Transformed(Exactly(a), SkipToLiteral(b))
+                }
+            }
+
+            // Combine character counters like "___" into a single pattern.
+            (Exactly(a), Exactly(b)) => Merged(Exactly(a + b)),
+
+            // Combine any combination of "at least" and "exactly" counters.
+            (AtLeast(a), Exactly(b)) | (AtLeast(a), AtLeast(b)) | (Exactly(a), AtLeast(b)) => {
+                Merged(AtLeast(a + b))
+            }
+
+            (AtLeast(a), Len(b)) => Merged(Len(a + b)),
+
+            // Optimizes for "match any ending" patterns like "hello%".
+            (AtLeast(a), All | End) => {
+                if a == 0 {
+                    Merged(All)
+                } else {
+                    Transformed(Exactly(a), All)
+                }
+            }
+
+            (AtLeast(a), Equals(b)) => {
+                if a == 0 {
+                    Merged(EndsWith(b))
+                } else {
+                    Transformed(Exactly(a), EndsWith(b))
+                }
+            }
+
+            (AtLeast(a), Contains(b)) => {
+                if a == 0 {
+                    Merged(Contains(b))
+                } else {
+                    Transformed(Exactly(a), StartsWith(b))
+                }
+            }
+
+            (AtLeast(a), StartsWith(b)) => {
+                if a == 0 {
+                    Merged(Contains(b))
+                } else {
+                    Transformed(Exactly(a), Contains(b))
+                }
+            }
+
+            (AtLeast(a), EndsWith(b)) => {
+                if a == 0 {
+                    Merged(EndsWith(b))
+                } else {
+                    Transformed(Exactly(a), EndsWith(b))
+                }
+            }
+
+            (Literal(s), End) => Merged(Equals(s)),
+
+            (SkipToLiteral(s), End) => Merged(EndsWith(s)),
+
+            (Literal(s), All) => Merged(StartsWith(s)),
+
+            (SkipToLiteral(s), All) => Merged(Contains(s)),
+
+            (Literal(mut a), StartsWith(b)) => {
+                a.merge_with(b);
+                Merged(StartsWith(a))
+            }
+
+            (Literal(mut a), Equals(b)) => {
+                a.merge_with(b);
+                Merged(Equals(a))
+            }
+
+            (SkipToLiteral(mut a), StartsWith(b)) => {
+                a.merge_with(b);
+                Merged(StartsWith(a))
+            }
+
+            (SkipToLiteral(mut a), Equals(b)) => {
+                a.merge_with(b);
+                Merged(EndsWith(a))
+            }
+
+            (Exactly(a), End) => Merged(Len(a)),
+
+            (Exactly(a), Len(b)) => Merged(Len(a + b)),
+
+            (End | All | StartsWith(_) | EndsWith(_) | Contains(_) | Equals(_) | Len(_), _) => {
+                unreachable!("Terminal should always be the last pattern");
+            }
+
+            (a, b) => Nothing(a, b),
         }
     }
 }
@@ -59,12 +191,12 @@ impl<'a> Patterns<'a> {
         let mut v = Vec::with_capacity(tokens.len());
 
         v.extend(tokens.iter().map(|token| match token {
-            Token::Literal(s) => Pattern::Literal(Cow::Borrowed(s)),
-            Token::Any => Pattern::AtLeast(0),
-            Token::Single => Pattern::Exactly(1),
+            Token::Literal(s) => Literal(Cat::from_str(s)),
+            Token::Any => AtLeast(0),
+            Token::Single => Exactly(1),
         }));
 
-        v.push(Pattern::End);
+        v.push(End);
         Patterns(v)
     }
 
@@ -73,277 +205,81 @@ impl<'a> Patterns<'a> {
         Patterns(patterns)
     }
 
-    pub fn optimize(self) -> Self {
-        let mut next_vec = Vec::with_capacity(self.len());
-        let mut curr = self;
-        loop {
-            match curr.optimize_one(next_vec) {
-                (Ok(patterns), mut v) => {
-                    curr = patterns;
-                    v.clear();
-                    next_vec = v;
-                }
-                (Err(patterns), _) => return patterns,
-            }
-        }
+    pub fn optimize(mut self) -> Self {
+        while self.optimize_one() {}
+        self
     }
 
-    fn optimize_one(
-        mut self,
-        mut next_vec: Vec<Pattern<'a>>,
-    ) -> (Result<Self, Self>, Vec<Pattern<'a>>) {
+    fn optimize_one(&mut self) -> bool {
+        use MergeResult::*;
         use Pattern::*;
 
         if self.0.is_empty() {
-            return (Err(Patterns(self.0)), next_vec);
+            return false;
         }
 
+        // Points just past the last element that we are done with.
+        let mut done_idx = 0;
+
+        // Points at the first element we are considering.
+        let mut idx = 0;
+
+        // Whether we changed anything (and therefore we should keep optimizing).
         let mut changed = false;
 
-        let mut it = self.0.drain(..).peekable();
-        while let Some(a) = it.next() {
-            let b = it.peek();
-            if b.is_none() {
-                next_vec.push(a);
-                break;
-            }
-            let b = b.unwrap();
+        while idx + 1 < self.0.len() {
+            // Take ownership of this and the next element.
+            // `Len(0)` is a noop element that is just a placeholder.
+            let a = std::mem::replace(&mut self.0[idx], Len(0));
+            let b = std::mem::replace(&mut self.0[idx + 1], Len(0));
 
-            match (a, b) {
-                // Remove empty literals.
-                (Literal(s), _) if s.is_empty() => {
-                    it.next();
+            // Try to merge the two patterns.
+            let merge_result = a.merge_with(b);
+            match merge_result {
+                Nothing(a, b) => {
+                    // Finish the first element.
+                    self.0[done_idx] = a;
+                    done_idx += 1;
+
+                    // Put the second element back.
+                    self.0[idx + 1] = b;
+                }
+
+                Merged(p) => {
+                    // Something changed!
                     changed = true;
+
+                    // Put the merged element in the second element's slot.
+                    // This effectively deletes the first element.
+                    // It also allows further optimizations to be applied in sequence.
+                    self.0[idx + 1] = p;
                 }
 
-                // Remove empty character counters.
-                (Exactly(0), _) => {
-                    it.next();
+                Transformed(a, b) => {
+                    // Something changed!
                     changed = true;
-                }
 
-                (Len(0), _) => {
-                    next_vec.push(End);
-                    it.next();
-                    changed = true;
-                }
+                    // Call the first element done.
+                    self.0[done_idx] = a;
+                    done_idx += 1;
 
-                // Remove empty "skip to literal".
-                (SkipToLiteral(s), _) if s.is_empty() => {
-                    it.next();
-                    changed = true;
-                }
-
-                // Combine adjacent literals.
-                // Escaping can cause literals to be split during Tokens::from_string.
-                (Literal(a), Literal(_)) => {
-                    let Some(Literal(b)) = it.next() else {
-                        unreachable!()
-                    };
-                    let mut a = a.into_owned();
-                    a.push_str(&b.into_owned());
-                    let c = Cow::Owned(a);
-                    next_vec.push(Literal(c));
-                    changed = true;
-                }
-
-                // Combine adjacent "skip to literal" and literal.
-                (SkipToLiteral(a), Literal(_)) => {
-                    let Some(Literal(b)) = it.next() else {
-                        unreachable!()
-                    };
-                    let mut a = a.into_owned();
-                    a.push_str(&b.into_owned());
-                    let c = Cow::Owned(a);
-                    next_vec.push(SkipToLiteral(c));
-                    changed = true;
-                }
-
-                // Combine "at least" and literal to make "skip to literal".
-                // This allows us to use highly-optimized substring search algorithms.
-                (AtLeast(a), Literal(_) | SkipToLiteral(_)) => {
-                    if a > 0 {
-                        next_vec.push(Exactly(a));
-                    }
-                    let Some(SkipToLiteral(b) | Literal(b)) = it.next() else {
-                        unreachable!()
-                    };
-                    next_vec.push(SkipToLiteral(b));
-                    changed = true;
-                }
-
-                // Combine character counters like "___" into a single pattern.
-                (Exactly(a), Exactly(b)) => {
-                    next_vec.push(Exactly(a + b));
-                    it.next();
-                    changed = true;
-                }
-
-                // Combine any combination of "at least" and "exactly" counters.
-                (AtLeast(a), Exactly(b)) | (AtLeast(a), AtLeast(b)) | (Exactly(a), AtLeast(b)) => {
-                    next_vec.push(AtLeast(a + b));
-                    it.next();
-                    changed = true;
-                }
-
-                (AtLeast(a), Len(b)) => {
-                    next_vec.push(Exactly(a + *b));
-                    next_vec.push(All);
-                    it.next();
-                    changed = true;
-                }
-
-                // Optimizes for "match any ending" patterns like "hello%".
-                (AtLeast(a), All | End) => {
-                    if a > 0 {
-                        next_vec.push(Exactly(a));
-                    }
-                    next_vec.push(All);
-                    it.next();
-                    changed = true;
-                }
-
-                (AtLeast(a), Equals(_)) => {
-                    if a > 0 {
-                        next_vec.push(Exactly(a));
-                    }
-                    let Some(Equals(s)) = it.next() else {
-                        unreachable!()
-                    };
-                    next_vec.push(EndsWith(s));
-                    changed = true;
-                }
-
-                (AtLeast(a), Contains(_)) => {
-                    if a > 0 {
-                        next_vec.push(Exactly(a));
-                    }
-                    let Some(Contains(s)) = it.next() else {
-                        unreachable!()
-                    };
-                    next_vec.push(Contains(s));
-                    changed = true;
-                }
-
-                (AtLeast(a), StartsWith(_)) => {
-                    if a > 0 {
-                        next_vec.push(Exactly(a));
-                    }
-                    let Some(StartsWith(s)) = it.next() else {
-                        unreachable!()
-                    };
-                    next_vec.push(Contains(s));
-                    changed = true;
-                }
-
-                (AtLeast(a), EndsWith(_)) => {
-                    if a > 0 {
-                        next_vec.push(Exactly(a));
-                    }
-                    let Some(EndsWith(s)) = it.next() else {
-                        unreachable!()
-                    };
-                    next_vec.push(EndsWith(s.clone()));
-                    changed = true;
-                }
-
-                (Literal(s), End) => {
-                    next_vec.push(Equals(s));
-                    it.next();
-                    changed = true;
-                }
-
-                (SkipToLiteral(s), End) => {
-                    next_vec.push(EndsWith(s));
-                    it.next();
-                    changed = true;
-                }
-
-                (Literal(s), All) => {
-                    next_vec.push(StartsWith(s));
-                    it.next();
-                    changed = true;
-                }
-
-                (SkipToLiteral(s), All) => {
-                    next_vec.push(Contains(s));
-                    it.next();
-                    changed = true;
-                }
-
-                (Literal(a), StartsWith(_)) => {
-                    let mut a = a.into_owned();
-                    let Some(StartsWith(b)) = it.next() else {
-                        unreachable!()
-                    };
-                    a.push_str(b.deref());
-                    let c = Cow::Owned(a);
-                    next_vec.push(StartsWith(c));
-                    changed = true;
-                }
-
-                (Literal(a), Equals(_)) => {
-                    let mut a = a.into_owned();
-                    let Some(Equals(b)) = it.next() else {
-                        unreachable!()
-                    };
-                    a.push_str(b.deref());
-                    let c = Cow::Owned(a);
-                    next_vec.push(Equals(c));
-                    changed = true;
-                }
-
-                (SkipToLiteral(a), StartsWith(_)) => {
-                    let mut a = a.into_owned();
-                    let Some(StartsWith(b)) = it.next() else {
-                        unreachable!()
-                    };
-                    a.push_str(b.deref());
-                    let c = Cow::Owned(a);
-                    next_vec.push(StartsWith(c));
-                    changed = true;
-                }
-
-                (SkipToLiteral(a), Equals(_)) => {
-                    let mut a = a.into_owned();
-                    let Some(Equals(b)) = it.next() else {
-                        unreachable!()
-                    };
-                    a.push_str(b.deref());
-                    let c = Cow::Owned(a);
-                    next_vec.push(EndsWith(c));
-                    changed = true;
-                }
-
-                (Exactly(a), End) => {
-                    next_vec.push(Len(a));
-                    it.next();
-                    changed = true;
-                }
-
-                (Exactly(a), Len(b)) => {
-                    next_vec.push(Len(a + *b));
-                    it.next();
-                    changed = true;
-                }
-
-                (End | All | StartsWith(_) | EndsWith(_) | Contains(_) | Equals(_) | Len(_), _) => {
-                    unreachable!("Terminal should always be the last pattern");
-                }
-
-                (a, _) => {
-                    next_vec.push(a);
+                    // Put the second element back so it can be merged with the next element.
+                    self.0[idx + 1] = b;
                 }
             }
+
+            // Move the index forward.
+            idx += 1;
         }
 
-        let ret = Patterns(next_vec);
-        drop(it);
-        if changed {
-            (Ok(ret), self.0)
-        } else {
-            (Err(ret), self.0)
-        }
+        // At this point, `idx` points to the last element.
+        self.0.swap(done_idx, idx);
+        done_idx += 1;
+
+        // Dump all the elements that got optimized away.
+        self.0.truncate(done_idx);
+
+        changed
     }
 }
 
@@ -359,7 +295,7 @@ mod tests {
         let patterns = Patterns::from_tokens(&tokens).optimize();
         assert_eq!(
             patterns,
-            Patterns::from_vec(vec![StartsWith(Cow::Borrowed("hello"))])
+            Patterns::from_vec(vec![StartsWith(Cat::from_str("hello"))])
         );
 
         let tokens = Tokens::from_str("hello%world");
@@ -367,8 +303,8 @@ mod tests {
         assert_eq!(
             patterns,
             Patterns::from_vec(vec![
-                Literal(Cow::Borrowed("hello")),
-                EndsWith(Cow::Borrowed("world"))
+                Literal(Cat::from_str("hello")),
+                EndsWith(Cat::from_str("world"))
             ])
         );
 
@@ -377,8 +313,8 @@ mod tests {
         assert_eq!(
             patterns,
             Patterns::from_vec(vec![
-                Literal(Cow::Borrowed("hello")),
-                Contains(Cow::Borrowed("world"))
+                Literal(Cat::from_str("hello")),
+                Contains(Cat::from_str("world"))
             ])
         );
 
@@ -387,8 +323,8 @@ mod tests {
         assert_eq!(
             patterns,
             Patterns::from_vec(vec![
-                SkipToLiteral(Cow::Borrowed("hello")),
-                EndsWith(Cow::Borrowed("world"))
+                SkipToLiteral(Cat::from_str("hello")),
+                EndsWith(Cat::from_str("world"))
             ])
         );
 
@@ -401,9 +337,9 @@ mod tests {
         assert_eq!(
             patterns,
             Patterns::from_vec(vec![
-                Literal(Cow::Borrowed("a")),
-                SkipToLiteral(Cow::Borrowed("b")),
-                EndsWith(Cow::Borrowed("c"))
+                Literal(Cat::from_str("a")),
+                SkipToLiteral(Cat::from_str("b")),
+                EndsWith(Cat::from_str("c"))
             ])
         );
 
@@ -437,19 +373,6 @@ mod tests {
             // Every other pattern should not be terminal.
             for i in 0..patterns.len() - 1 {
                 assert!(!patterns[i].is_terminal());
-            }
-
-            // The patterns should not contain empty literals-like things.
-            for i in 0..patterns.len() {
-                match &patterns[i] {
-                    Literal(s) if s.is_empty() => assert!(false),
-                    SkipToLiteral(s) if s.is_empty() => assert!(false),
-                    StartsWith(s) if s.is_empty() => assert!(false),
-                    EndsWith(s) if s.is_empty() => assert!(false),
-                    Contains(s) if s.is_empty() => assert!(false),
-                    Equals(s) if s.is_empty() => assert!(false),
-                    _ => (),
-                }
             }
 
             // Helper patterns should be optimized away.
