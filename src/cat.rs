@@ -8,8 +8,8 @@ impl<'a> Cat<'a> {
         Self { v: vec![s] }
     }
 
-    pub fn merge_with(&mut self, other: Self) {
-        self.v.extend(other.v);
+    pub fn merge_with(&mut self, mut other: Self) {
+        self.v.extend(other.v.drain(..));
     }
 
     pub fn to_string(&self) -> String {
