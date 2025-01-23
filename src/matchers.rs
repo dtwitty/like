@@ -185,27 +185,40 @@ impl Matcher {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct Matchers(Vec<Matcher>);
+pub(crate) struct Matchers {
+    matchers: Vec<Matcher>,
+    contains_singles: bool,
+}
 
 impl Deref for Matchers {
     type Target = [Matcher];
 
     fn deref(&self) -> &Self::Target {
-        &self.0
+        &self.matchers
     }
 }
 
 impl Matchers {
     pub fn from_patterns(patterns: &Patterns) -> Self {
-        let matchers = patterns.iter().map(Matcher::from_pattern).collect();
-        Matchers(matchers)
+        use Matcher::*;
+        use MedialMatcher::*;
+        use TerminalMatcher::*;
+
+        let matchers: Vec<Matcher> = patterns.iter().map(Matcher::from_pattern).collect();
+        let contains_singles = matchers
+            .iter()
+            .any(|m| matches!(m, Medial(Exactly(_))) || matches!(m, Terminal(Len(_))));
+        Matchers {
+            matchers,
+            contains_singles,
+        }
     }
 
     pub fn matches(&self, s: &str) -> bool {
         use Matcher::*;
 
         let mut remaining_input = s;
-        let mut remaining_matchers = &self.0[..];
+        let mut remaining_matchers = &self.matchers[..];
         let mut last_wildcard = None;
 
         while !remaining_matchers.is_empty() {
@@ -220,14 +233,17 @@ impl Matchers {
                     let rem = mm.matches(remaining_input).unwrap();
 
                     if let SkipToLiteral(finder) = mm {
-                        // We may need to backtrack to this position.
-                        // The next thing we should try is to take one character from the start of the match.
-                        let needle_len = finder.needle().len();
-                        let rem_len = rem.len();
-                        let matched_at = remaining_input.len() - rem_len - needle_len;
-                        let t = remaining_input.get(matched_at..).unwrap();
-                        let next_try_input = strip_char(t);
-                        last_wildcard = Some((remaining_matchers, next_try_input));
+                        // If the pattern doesn't contain any single chars, we never need to backtrack.
+                        if self.contains_singles {
+                            // We may need to backtrack to this position.
+                            // The next thing we should try is to take one character from the start of the match.
+                            let needle_len = finder.needle().len();
+                            let rem_len = rem.len();
+                            let matched_at = remaining_input.len() - rem_len - needle_len;
+                            let t = remaining_input.get(matched_at..).unwrap();
+                            let next_try_input = strip_char(t);
+                            last_wildcard = Some((remaining_matchers, next_try_input));
+                        }
                     }
 
                     remaining_input = rem;

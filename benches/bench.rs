@@ -118,5 +118,5 @@ fn benchmark_matching(c: &mut Criterion) {
 }
 
 criterion_group!(construction, benchmark_construction);
-//criterion_group!(matching, benchmark_matching);
-criterion_main!(construction);
+criterion_group!(matching, benchmark_matching);
+criterion_main!(matching);
