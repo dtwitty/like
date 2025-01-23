@@ -1,4 +1,3 @@
-use crate::matchers::MedialMatcher::SkipToLiteral;
 use crate::patterns::{Pattern, Patterns};
 use memchr::memmem::Finder;
 use std::fmt::{Debug, Display, Formatter};
@@ -6,7 +5,7 @@ use std::num::NonZeroUsize;
 use std::ops::Deref;
 
 #[derive(Debug, Clone)]
-pub(crate) enum TerminalMatcher {
+pub(crate) enum Matcher {
     /// Consume the entire string.
     All,
     /// Consume the end of the string.
@@ -24,41 +23,6 @@ pub(crate) enum TerminalMatcher {
     EqualsChar(char),
     /// Consume the entire string if it has the given length.
     Len(NonZeroUsize),
-}
-
-impl TerminalMatcher {
-    pub fn matches(&self, s: &str) -> bool {
-        use TerminalMatcher::*;
-        match self {
-            All => true,
-            End => s.is_empty(),
-            StartsWith(prefix) => s.starts_with(prefix),
-            StartsWithChar(c) => s.chars().next().map_or(false, |d| d == *c),
-            EndsWith(suffix) => s.ends_with(suffix),
-            EndsWithChar(c) => s.chars().next_back().map_or(false, |d| d == *c),
-            Contains(finder) => finder.find(s.as_bytes()).is_some(),
-            Equals(s2) => s == s2,
-            EqualsChar(c) => {
-                let mut chars = s.chars();
-                if let Some(first) = chars.next() {
-                    // Needs to match and there must be no other character.
-                    first == *c && chars.next().is_none()
-                } else {
-                    // No first character.
-                    false
-                }
-            }
-
-            Len(n) => {
-                let mut chars = s.chars();
-                chars.nth(n.get() - 1).is_some() && chars.next().is_none()
-            }
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub(crate) enum MedialMatcher {
     /// Consume a literal string.
     Literal(String),
     LiteralChar(char),
@@ -68,10 +32,107 @@ pub(crate) enum MedialMatcher {
     Exactly(NonZeroUsize),
 }
 
-impl MedialMatcher {
-    pub fn matches<'a>(&self, s: &'a str) -> Option<&'a str> {
-        use MedialMatcher::*;
+impl Matcher {
+    fn from_pattern(p: &Pattern) -> Self {
+        use Pattern::*;
+
+        match p {
+            All => Matcher::All,
+
+            End => Matcher::End,
+
+            StartsWith(s) => {
+                let s = s.to_string();
+                if s.chars().count() == 1 {
+                    Matcher::StartsWithChar(s.chars().next().unwrap())
+                } else {
+                    Matcher::StartsWith(s.to_string())
+                }
+            }
+
+            EndsWith(s) => {
+                let s = s.to_string();
+                if s.chars().count() == 1 {
+                    Matcher::EndsWithChar(s.chars().next().unwrap())
+                } else {
+                    Matcher::EndsWith(s.to_string())
+                }
+            }
+
+            Contains(s) => {
+                let s = s.to_string();
+                Matcher::Contains(Finder::new(s.as_bytes()).into_owned())
+            }
+
+            Equals(s) => {
+                let s = s.to_string();
+                if s.chars().count() == 1 {
+                    Matcher::EqualsChar(s.chars().next().unwrap())
+                } else {
+                    Matcher::Equals(s.to_string())
+                }
+            }
+
+            Len(n) => Matcher::Len(NonZeroUsize::try_from(*n).unwrap()),
+
+            Literal(s) => {
+                let s = s.to_string();
+                if s.chars().count() == 1 {
+                    Matcher::LiteralChar(s.chars().next().unwrap())
+                } else {
+                    Matcher::Literal(s.to_string())
+                }
+            }
+
+            SkipToLiteral(s) => {
+                let s = s.to_string();
+                Matcher::SkipToLiteral(Finder::new(s.as_bytes()).into_owned())
+            }
+
+            Exactly(n) => Matcher::Exactly(NonZeroUsize::try_from(*n).unwrap()),
+
+            AtLeast(_) => panic!("AtLeast should have been optimized away"),
+        }
+    }
+
+    pub fn try_match<'a>(&self, s: &'a str) -> Option<&'a str> {
+        use Matcher::*;
         match self {
+            All => Some(""),
+
+            End => s.is_empty().then_some(""),
+
+            StartsWith(prefix) => s.starts_with(prefix).then_some(""),
+
+            StartsWithChar(c) => s.chars().next().filter(|d| d == c).and(Some("")),
+
+            EndsWith(suffix) => s.ends_with(suffix).then_some(""),
+
+            EndsWithChar(c) => s.chars().next_back().filter(|d| d == c).and(Some("")),
+
+            Contains(finder) => finder.find(s.as_bytes()).and(Some("")),
+
+            Equals(s2) => (s == s2).then_some(""),
+
+            EqualsChar(c) => {
+                let mut chars = s.chars();
+                let d = chars.next()?;
+                if d == *c && chars.next().is_none() {
+                    Some("")
+                } else {
+                    None
+                }
+            }
+
+            Len(n) => {
+                let mut chars = s.chars();
+                if chars.nth(n.get() - 1).is_some() && chars.next().is_none() {
+                    Some("")
+                } else {
+                    None
+                }
+            }
+
             Literal(lit) => {
                 if s.starts_with(lit) {
                     Some(&s[lit.len()..])
@@ -106,80 +167,12 @@ impl MedialMatcher {
             }
         }
     }
-}
 
-#[derive(Debug, Clone)]
-pub(crate) enum Matcher {
-    Terminal(TerminalMatcher),
-    Medial(MedialMatcher),
-}
-
-impl Matcher {
-    fn from_pattern(p: &Pattern) -> Self {
-        use Pattern::*;
-
-        match p {
-            All => Matcher::Terminal(TerminalMatcher::All),
-
-            End => Matcher::Terminal(TerminalMatcher::End),
-
-            StartsWith(s) => {
-                let s = s.to_string();
-                if s.chars().count() == 1 {
-                    Matcher::Terminal(TerminalMatcher::StartsWithChar(s.chars().next().unwrap()))
-                } else {
-                    Matcher::Terminal(TerminalMatcher::StartsWith(s.to_string()))
-                }
-            }
-
-            EndsWith(s) => {
-                let s = s.to_string();
-                if s.chars().count() == 1 {
-                    Matcher::Terminal(TerminalMatcher::EndsWithChar(s.chars().next().unwrap()))
-                } else {
-                    Matcher::Terminal(TerminalMatcher::EndsWith(s.to_string()))
-                }
-            }
-
-            Contains(s) => {
-                let s = s.to_string();
-                Matcher::Terminal(TerminalMatcher::Contains(
-                    Finder::new(s.as_bytes()).into_owned(),
-                ))
-            }
-
-            Equals(s) => {
-                let s = s.to_string();
-                if s.chars().count() == 1 {
-                    Matcher::Terminal(TerminalMatcher::EqualsChar(s.chars().next().unwrap()))
-                } else {
-                    Matcher::Terminal(TerminalMatcher::Equals(s.to_string()))
-                }
-            }
-
-            Len(n) => Matcher::Terminal(TerminalMatcher::Len(NonZeroUsize::try_from(*n).unwrap())),
-
-            Literal(s) => {
-                let s = s.to_string();
-                if s.chars().count() == 1 {
-                    Matcher::Medial(MedialMatcher::LiteralChar(s.chars().next().unwrap()))
-                } else {
-                    Matcher::Medial(MedialMatcher::Literal(s.to_string()))
-                }
-            }
-
-            SkipToLiteral(s) => {
-                let s = s.to_string();
-                Matcher::Medial(MedialMatcher::SkipToLiteral(
-                    Finder::new(s.as_bytes()).into_owned(),
-                ))
-            }
-
-            Exactly(n) => {
-                Matcher::Medial(MedialMatcher::Exactly(NonZeroUsize::try_from(*n).unwrap()))
-            }
-
-            AtLeast(_) => panic!("AtLeast should have been optimized away"),
+    pub fn enable_backtracking(&self) -> bool {
+        use Matcher::*;
+        match self {
+            Exactly(_) | Len(_) => true,
+            _ => false,
         }
     }
 }
@@ -187,7 +180,6 @@ impl Matcher {
 #[derive(Debug, Clone)]
 pub(crate) struct Matchers {
     matchers: Vec<Matcher>,
-    contains_singles: bool,
 }
 
 impl Deref for Matchers {
@@ -200,18 +192,8 @@ impl Deref for Matchers {
 
 impl Matchers {
     pub fn from_patterns(patterns: &Patterns) -> Self {
-        use Matcher::*;
-        use MedialMatcher::*;
-        use TerminalMatcher::*;
-
-        let matchers: Vec<Matcher> = patterns.iter().map(Matcher::from_pattern).collect();
-        let contains_singles = matchers
-            .iter()
-            .any(|m| matches!(m, Medial(Exactly(_))) || matches!(m, Terminal(Len(_))));
-        Matchers {
-            matchers,
-            contains_singles,
-        }
+        let matchers = patterns.iter().map(Matcher::from_pattern).collect();
+        Matchers { matchers }
     }
 
     pub fn matches(&self, s: &str) -> bool {
@@ -220,59 +202,50 @@ impl Matchers {
         let mut remaining_input = s;
         let mut remaining_matchers = &self.matchers[..];
         let mut last_wildcard = None;
+        let mut should_backtrack = false;
 
         while !remaining_matchers.is_empty() {
             let m = &remaining_matchers[0];
-            match m {
-                Terminal(tm) if tm.matches(remaining_input) => {
-                    return true;
+            if m.enable_backtracking() {
+                should_backtrack = true;
+            }
+
+            if let Some(rem) = m.try_match(remaining_input) {
+                if let SkipToLiteral(finder) = m {
+                    // We may need to backtrack to this position.
+                    // The next thing we should try is to take one character from the start of the match.
+                    let needle_len = finder.needle().len();
+                    let rem_len = rem.len();
+                    let matched_at = remaining_input.len() - rem_len - needle_len;
+                    let t = remaining_input.get(matched_at..).unwrap();
+                    let next_try_input = strip_char(t);
+                    last_wildcard = Some((remaining_matchers, next_try_input));
+                    should_backtrack = false;
                 }
 
-                Medial(mm) if mm.matches(remaining_input).is_some() => {
-                    // We expect the compiler to optimize the repeated sub-expression.
-                    let rem = mm.matches(remaining_input).unwrap();
-
-                    if let SkipToLiteral(finder) = mm {
-                        // If the pattern doesn't contain any single chars, we never need to backtrack.
-                        if self.contains_singles {
-                            // We may need to backtrack to this position.
-                            // The next thing we should try is to take one character from the start of the match.
-                            let needle_len = finder.needle().len();
-                            let rem_len = rem.len();
-                            let matched_at = remaining_input.len() - rem_len - needle_len;
-                            let t = remaining_input.get(matched_at..).unwrap();
-                            let next_try_input = strip_char(t);
-                            last_wildcard = Some((remaining_matchers, next_try_input));
-                        }
-                    }
-
-                    remaining_input = rem;
-                    remaining_matchers = &remaining_matchers[1..];
-                }
-
-                _ if !remaining_input.is_empty() => {
-                    // Match has failed, see if we can backtrack to the last saved wildcard.
-                    if let Some((matchers, next_try_input)) = last_wildcard {
-                        if matchers.len() == remaining_matchers.len()
-                            && next_try_input.len() == remaining_input.len()
-                        {
-                            // This would cause an infinite loop!
-                            return false;
-                        }
-
-                        remaining_matchers = matchers;
-                        remaining_input = next_try_input;
-                    } else {
+                remaining_input = rem;
+                remaining_matchers = &remaining_matchers[1..];
+            } else if !remaining_input.is_empty() {
+                match (m, last_wildcard) {
+                    (SkipToLiteral(_), _) => {
+                        // We failed to find the literal in the remaining input, so we fail.
                         return false;
                     }
-                }
 
-                _ => {
-                    return false;
+                    (_, Some((matchers, next_try_input))) if should_backtrack => {
+                        // We can backtrack!
+                        remaining_matchers = matchers;
+                        remaining_input = next_try_input;
+                    }
+
+                    _ => return false,
                 }
+            } else {
+                return false;
             }
         }
 
+        // We have exhausted all matchers. See if there is any more input.
         remaining_input.is_empty()
     }
 }
