@@ -1,3 +1,4 @@
+use crate::matchers::MedialMatcher::SkipToLiteral;
 use crate::patterns::{Pattern, Patterns};
 use memchr::memmem::Finder;
 use std::fmt::{Debug, Display, Formatter};
@@ -100,7 +101,7 @@ impl MedialMatcher {
 
             Exactly(n) => {
                 let mut chars = s.chars();
-                chars.nth(n.get())?;
+                chars.nth(n.get() - 1)?;
                 Some(chars.as_str())
             }
         }
@@ -145,7 +146,7 @@ impl Matcher {
                 Matcher::Terminal(TerminalMatcher::Contains(
                     Finder::new(s.as_bytes()).into_owned(),
                 ))
-            },
+            }
 
             Equals(s) => {
                 let s = s.to_string();
@@ -172,7 +173,7 @@ impl Matcher {
                 Matcher::Medial(MedialMatcher::SkipToLiteral(
                     Finder::new(s.as_bytes()).into_owned(),
                 ))
-            },
+            }
 
             Exactly(n) => {
                 Matcher::Medial(MedialMatcher::Exactly(NonZeroUsize::try_from(*n).unwrap()))
@@ -201,23 +202,62 @@ impl Matchers {
     }
 
     pub fn matches(&self, s: &str) -> bool {
-        let mut s = s;
-        for m in self.iter() {
+        use Matcher::*;
+
+        let mut remaining_input = s;
+        let mut remaining_matchers = &self.0[..];
+        let mut last_wildcard = None;
+
+        while !remaining_matchers.is_empty() {
+            let m = &remaining_matchers[0];
             match m {
-                Matcher::Terminal(tm) => {
-                    return tm.matches(s);
+                Terminal(tm) if tm.matches(remaining_input) => {
+                    return true;
                 }
 
-                Matcher::Medial(mm) => {
-                    if let Some(rest) = mm.matches(s) {
-                        s = rest;
+                Medial(mm) if mm.matches(remaining_input).is_some() => {
+                    // We expect the compiler to optimize the repeated sub-expression.
+                    let rem = mm.matches(remaining_input).unwrap();
+
+                    if let SkipToLiteral(finder) = mm {
+                        // We may need to backtrack to this position.
+                        // The next thing we should try is to take one character from the start of the match.
+                        let needle_len = finder.needle().len();
+                        let rem_len = rem.len();
+                        let matched_at = remaining_input.len() - rem_len - needle_len;
+                        let t = remaining_input.get(matched_at..).unwrap();
+                        let next_try_input = strip_char(t);
+                        last_wildcard = Some((remaining_matchers, next_try_input));
+                    }
+
+                    remaining_input = rem;
+                    remaining_matchers = &remaining_matchers[1..];
+                }
+
+                _ if !remaining_input.is_empty() => {
+                    // Match has failed, see if we can backtrack to the last saved wildcard.
+                    if let Some((matchers, next_try_input)) = last_wildcard {
+                        if matchers.len() == remaining_matchers.len()
+                            && next_try_input.len() == remaining_input.len()
+                        {
+                            // This would cause an infinite loop!
+                            return false;
+                        }
+
+                        remaining_matchers = matchers;
+                        remaining_input = next_try_input;
                     } else {
                         return false;
                     }
                 }
+
+                _ => {
+                    return false;
+                }
             }
         }
-        s.is_empty()
+
+        remaining_input.is_empty()
     }
 }
 
@@ -225,4 +265,10 @@ impl Display for Matchers {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
         write!(f, "{:?}", self)
     }
+}
+
+fn strip_char(s: &str) -> &str {
+    let mut chars = s.chars();
+    chars.next();
+    chars.as_str()
 }

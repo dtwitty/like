@@ -285,7 +285,6 @@ impl<'a> Patterns<'a> {
 
 #[cfg(test)]
 mod tests {
-    use super::Pattern::*;
     use super::*;
     use proptest::prelude::ProptestConfig;
     use proptest::proptest;

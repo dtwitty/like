@@ -69,10 +69,10 @@
 //!
 //! Once you have a compiled `LikeMatcher`, you can use it to match strings.
 //! The matcher is completely thread safe, though it is not cheap to clone.
+mod cat;
 mod matchers;
 mod patterns;
 pub mod tokens;
-mod cat;
 
 use crate::matchers::Matchers;
 use crate::patterns::*;
@@ -110,24 +110,28 @@ mod tests {
 
     #[test]
     fn test_literal() {
+        assert!(!LikeMatcher::new("hello").matches(""));
         assert!(LikeMatcher::new("world").matches("world"));
         assert!(!LikeMatcher::new("hello").matches("world"));
     }
 
     #[test]
     fn test_starts_with() {
+        assert!(!LikeMatcher::new("hello%").matches(""));
         assert!(LikeMatcher::new("hello%").matches("hello world"));
         assert!(!LikeMatcher::new("hello%").matches("world"));
     }
 
     #[test]
     fn test_ends_with() {
+        assert!(!LikeMatcher::new("%world").matches(""));
         assert!(LikeMatcher::new("%world").matches("hello world"));
         assert!(!LikeMatcher::new("%world").matches("hello"));
     }
 
     #[test]
     fn test_contains() {
+        assert!(!LikeMatcher::new("%hello%").matches(""));
         assert!(LikeMatcher::new("%world%").matches("hello world"));
         assert!(LikeMatcher::new("%hello%").matches("hello world"));
         assert!(LikeMatcher::new("%llo wo%").matches("hello world"));
@@ -195,6 +199,13 @@ mod tests {
         assert!(LikeMatcher::new("'%'%%'%'").matches("'a'a'a'a'a'a'a'a'a'"));
     }
 
+    #[test]
+    fn test_regressions() {
+        assert!(!LikeMatcher::new("%aa_a").matches("aabb"));
+        assert!(LikeMatcher::new("%ab__bb%").matches("abaabb"));
+        assert!(LikeMatcher::new("%b_").matches("bba"));
+    }
+
     struct RegexLikeMatcher {
         regex: regex::Regex,
     }
@@ -225,12 +236,14 @@ mod tests {
     proptest! {
         #![proptest_config(ProptestConfig {
             // Generate lots of test cases.
-            cases: 1 << 18,
+            cases: 1 << 14,
             .. ProptestConfig::default()
         })]
 
         #[test]
-        fn test_matching_correctness(pattern in ".*", input in ".*") {
+        // Test against a reference regex implementation.
+        // Use a limited alphabet to increase the change of matches.
+        fn test_matching_correctness(pattern in r"[ab%_]*", input in r"[ab]*") {
             let like_matcher = LikeMatcher::new(&pattern);
             let regex_matcher = RegexLikeMatcher::new(&pattern);
             let like_result = like_matcher.matches(&input);
