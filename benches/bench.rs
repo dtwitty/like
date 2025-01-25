@@ -32,6 +32,7 @@ impl RegexLikeMatcher {
     }
 }
 
+
 fn patterns_and_inputs() -> &'static [(&'static str, &'static str)] {
     &[
         (
@@ -111,6 +112,12 @@ fn benchmark_matching(c: &mut Criterion) {
         group.bench_function(
             format!("RegexLikeMatcher(\"{pattern}\").matches(\"{input}\")"),
             |b| b.iter(|| regex_like_matcher.matches(black_box(input))),
+        );
+
+        let wild_like_matcher = wildmatch::WildMatchPattern::<'%', '_'>::new(pattern);
+        group.bench_function(
+            format!("WildMatchPattern(\"{pattern}\").matches(\"{input}\")"),
+            |b| b.iter(|| wild_like_matcher.matches(black_box(input))),
         );
     }
 
