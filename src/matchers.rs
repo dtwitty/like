@@ -92,6 +92,8 @@ impl Matcher {
             Exactly(n) => Matcher::Exactly(NonZeroUsize::try_from(*n).unwrap()),
 
             AtLeast(_) => panic!("AtLeast should have been optimized away"),
+
+            Noop => panic!("Noop should have been optimized away"),
         }
     }
 
@@ -124,6 +126,16 @@ impl Matcher {
                 }
             }
 
+            Len(n) if n.get() == 1 => {
+                let mut chars = s.chars();
+                chars.next()?;
+                if chars.next().is_none() {
+                    Some("")
+                } else {
+                    None
+                }
+            }
+
             Len(n) => {
                 let mut chars = s.chars();
                 if chars.nth(n.get() - 1).is_some() && chars.next().is_none() {
@@ -133,13 +145,7 @@ impl Matcher {
                 }
             }
 
-            Literal(lit) => {
-                if s.starts_with(lit) {
-                    Some(&s[lit.len()..])
-                } else {
-                    None
-                }
-            }
+            Literal(lit) => s.strip_prefix(lit),
 
             LiteralChar(c) => {
                 let mut chars = s.chars();

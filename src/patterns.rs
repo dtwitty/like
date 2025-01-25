@@ -1,8 +1,44 @@
+//! This module contains the intermediate representation (IR) of the matching engine. Though the
+//! module itself is non-public so it can change at any time, these docs are available for the
+//! curious.
+//!
+//! # Patterns and Optimization
+//! There are 2 concepts to understand here: rewriting and match-time optimizations.
+//!
+//! ## Rewriting
+//! Rewrites turn a sequence of patterns into one that is more efficient to match. Here is a
+//! (non-exhaustive) list of rules implemented by this crate:
+//! - Adjacent literals are combined into one.
+//! - Adjacent "any" tokens are merged.
+//! - Adjacent "single" tokens are merged into a single "exactly n characters" token.
+//! - A "single" token can be pushed left past an "any" token, letting us consume characters as
+//!  early as possible.
+//! - "Any", "single" can be merged into "at least n characters".
+//! - "Any" can be combined with a literal to make a special "skip to literal" pattern.
+//!
+//! This crate also has special patterns for the end of the string. For example:
+//!  - `"...%abc"` can be matched as "ends with `"abc"`".
+//! - `"...%abc%"` can be matched as "ends with a string containing `"abc"`".
+//! - `"...abc%"` can be matched as "ends with a string starting with`"abc"`".
+//! - `"..._____"` can be matched as "ends with a string of length 5".
+//! - etc...
+//!
+//! These end matchers speed up the matching process by allowing us to ignore lots of characters.
+//! For example, the pattern `"hello%word"` can be matched by only looking at the first and last few
+//! characters of the string, even if the string is very long.
+//!
+//! ## Match-Time Optimizations
+//! At match time, we implement a simple state machine that consumes characters from the string. The
+//! real workhorse is [`Finder`](https://docs.rs/memchr/latest/memchr/memmem/struct.Finder.html)
+//! struct from the [`memchr`](https://docs.rs/memchr/latest/memchr/index.html) crate, which allows
+//! us to search for substrings extremely quickly. There are optimizations for dealing with single
+//! characters vs substrings.
+
 use crate::cat::Cat;
-use crate::patterns::Pattern::{
-    All, AtLeast, Contains, End, EndsWith, Equals, Exactly, Len, Literal, SkipToLiteral, StartsWith,
-};
+use crate::patterns::MergeResult::*;
+use crate::patterns::Pattern::*;
 use crate::tokens::{Token, Tokens};
+use std::num::NonZeroUsize;
 use std::ops::Deref;
 
 /// Matching units that can non-deterministically consume characters from a string.
@@ -15,7 +51,7 @@ pub(crate) enum Pattern<'a> {
     /// Consume any character, at least the given number of times.
     AtLeast(usize),
     /// Consume exactly the given number of characters.
-    Exactly(usize),
+    Exactly(NonZeroUsize),
     /// Consume the end of the string.
     End,
     /// Consume the entire string.
@@ -29,13 +65,15 @@ pub(crate) enum Pattern<'a> {
     /// Consume the entire string if it equals the given string.
     Equals(Cat<'a>),
     /// Consume the entire string if it has the given length.
-    Len(usize),
+    Len(NonZeroUsize),
+    /// Consume nothing. This is a placeholder for optimizations.
+    Noop,
 }
 
 pub(crate) enum MergeResult<'a> {
     /// Nothing changed, both patterns returned.
     Nothing(Pattern<'a>, Pattern<'a>),
-    /// The 2 potterns were merged into 1.
+    /// The 2 patterns were merged into 1.
     Merged(Pattern<'a>),
     /// Both patterns were changed and returned.
     Transformed(Pattern<'a>, Pattern<'a>),
@@ -57,79 +95,43 @@ impl<'a> Pattern<'a> {
         use MergeResult::*;
 
         match (self, other) {
+            (Noop, other) => Merged(other),
+            (other, Noop) => Merged(other),
             // Combine adjacent literals.
             // Escaping can cause literals to be split during Tokens::from_string.
-            (Literal(mut a), Literal(b)) => {
-                a.merge_with(b);
-                Merged(Literal(a))
-            }
+            (Literal(a), Literal(b)) => Merged(Literal(a.merge_with(b))),
 
             // Combine adjacent "skip to literal" and literal.
-            (SkipToLiteral(mut a), Literal(b)) => {
-                a.merge_with(b);
-                Merged(SkipToLiteral(a))
-            }
+            (SkipToLiteral(a), Literal(b)) => Merged(SkipToLiteral(a.merge_with(b))),
 
             // Combine "at least" and literal to make "skip to literal".
             // This allows us to use highly-optimized substring search algorithms.
-            (AtLeast(a), Literal(b) | SkipToLiteral(b)) => {
-                if a == 0 {
-                    Merged(SkipToLiteral(b))
-                } else {
-                    Transformed(Exactly(a), SkipToLiteral(b))
-                }
+            (AtLeast(a), Literal(c) | SkipToLiteral(c)) => {
+                maybe_prepend_exactly(a, SkipToLiteral(c))
             }
 
             // Combine character counters like "___" into a single pattern.
-            (Exactly(a), Exactly(b)) => Merged(Exactly(a + b)),
+            (Exactly(a), Exactly(b)) => Merged(Exactly(a.checked_add(b.get()).unwrap())),
 
             // Combine any combination of "at least" and "exactly" counters.
-            (AtLeast(a), Exactly(b)) | (AtLeast(a), AtLeast(b)) | (Exactly(a), AtLeast(b)) => {
-                Merged(AtLeast(a + b))
-            }
+            (AtLeast(a), Exactly(b)) => Merged(AtLeast(a + b.get())),
 
-            (AtLeast(a), Len(b)) => Merged(Len(a + b)),
+            (AtLeast(a), AtLeast(b)) => Merged(AtLeast(a + b)),
+
+            (Exactly(a), AtLeast(b)) => Merged(AtLeast(a.get() + b)),
+
+            (AtLeast(a), Len(b)) => Transformed(Exactly(b.checked_add(a).unwrap()), All),
 
             // Optimizes for "match any ending" patterns like "hello%".
-            (AtLeast(a), All | End) => {
-                if a == 0 {
-                    Merged(All)
-                } else {
-                    Transformed(Exactly(a), All)
-                }
-            }
+            (AtLeast(a), All | End) => maybe_prepend_exactly(a, All),
 
-            (AtLeast(a), Equals(b)) => {
-                if a == 0 {
-                    Merged(EndsWith(b))
-                } else {
-                    Transformed(Exactly(a), EndsWith(b))
-                }
-            }
+            (AtLeast(a), Equals(c)) => maybe_prepend_exactly(a, EndsWith(c)),
 
-            (AtLeast(a), Contains(b)) => {
-                if a == 0 {
-                    Merged(Contains(b))
-                } else {
-                    Transformed(Exactly(a), StartsWith(b))
-                }
-            }
+            (AtLeast(a), Contains(c)) => maybe_prepend_exactly(a, Contains(c)),
 
-            (AtLeast(a), StartsWith(b)) => {
-                if a == 0 {
-                    Merged(Contains(b))
-                } else {
-                    Transformed(Exactly(a), Contains(b))
-                }
-            }
+            (AtLeast(a), StartsWith(c)) => maybe_prepend_exactly(a, Contains(c)),
 
-            (AtLeast(a), EndsWith(b)) => {
-                if a == 0 {
-                    Merged(EndsWith(b))
-                } else {
-                    Transformed(Exactly(a), EndsWith(b))
-                }
-            }
+            (AtLeast(a), EndsWith(c)) => maybe_prepend_exactly(a, EndsWith(c)),
 
             (Literal(s), End) => Merged(Equals(s)),
 
@@ -139,29 +141,17 @@ impl<'a> Pattern<'a> {
 
             (SkipToLiteral(s), All) => Merged(Contains(s)),
 
-            (Literal(mut a), StartsWith(b)) => {
-                a.merge_with(b);
-                Merged(StartsWith(a))
-            }
+            (Literal(a), StartsWith(b)) => Merged(StartsWith(a.merge_with(b))),
 
-            (Literal(mut a), Equals(b)) => {
-                a.merge_with(b);
-                Merged(Equals(a))
-            }
+            (Literal(a), Equals(b)) => Merged(Equals(a.merge_with(b))),
 
-            (SkipToLiteral(mut a), StartsWith(b)) => {
-                a.merge_with(b);
-                Merged(StartsWith(a))
-            }
+            (SkipToLiteral(a), StartsWith(b)) => Merged(StartsWith(a.merge_with(b))),
 
-            (SkipToLiteral(mut a), Equals(b)) => {
-                a.merge_with(b);
-                Merged(EndsWith(a))
-            }
+            (SkipToLiteral(a), Equals(b)) => Merged(EndsWith(a.merge_with(b))),
 
             (Exactly(a), End) => Merged(Len(a)),
 
-            (Exactly(a), Len(b)) => Merged(Len(a + b)),
+            (Exactly(a), Len(b)) => Merged(Len(a.checked_add(b.get()).unwrap())),
 
             (End | All | StartsWith(_) | EndsWith(_) | Contains(_) | Equals(_) | Len(_), _) => {
                 unreachable!("Terminal should always be the last pattern");
@@ -169,6 +159,13 @@ impl<'a> Pattern<'a> {
 
             (a, b) => Nothing(a, b),
         }
+    }
+}
+
+fn maybe_prepend_exactly(n: usize, p: Pattern) -> MergeResult {
+    match NonZeroUsize::new(n) {
+        Some(n) => Transformed(Exactly(n), p),
+        None => Merged(p),
     }
 }
 
@@ -193,7 +190,7 @@ impl<'a> Patterns<'a> {
         v.extend(tokens.iter().map(|token| match token {
             Token::Literal(s) => Literal(Cat::from_str(s)),
             Token::Any => AtLeast(0),
-            Token::Single => Exactly(1),
+            Token::Single => Exactly(NonZeroUsize::new(1).unwrap()),
         }));
 
         v.push(End);
@@ -230,8 +227,8 @@ impl<'a> Patterns<'a> {
         while idx + 1 < self.0.len() {
             // Take ownership of this and the next element.
             // `Len(0)` is a noop element that is just a placeholder.
-            let a = std::mem::replace(&mut self.0[idx], Len(0));
-            let b = std::mem::replace(&mut self.0[idx + 1], Len(0));
+            let a = std::mem::replace(&mut self.0[idx], Noop);
+            let b = std::mem::replace(&mut self.0[idx + 1], Noop);
 
             // Try to merge the two patterns.
             let merge_result = a.merge_with(b);
@@ -329,7 +326,10 @@ mod tests {
 
         let tokens = Tokens::from_str("_%_%_");
         let patterns = Patterns::from_tokens(&tokens).optimize();
-        assert_eq!(patterns, Patterns::from_vec(vec![Exactly(3), All]));
+        assert_eq!(
+            patterns,
+            Patterns::from_vec(vec![Exactly(NonZeroUsize::new(3).unwrap()), All])
+        );
 
         let tokens = Tokens::from_str("a%b%c");
         let patterns = Patterns::from_tokens(&tokens).optimize();
@@ -348,7 +348,10 @@ mod tests {
 
         let tokens = Tokens::from_str("_");
         let patterns = Patterns::from_tokens(&tokens).optimize();
-        assert_eq!(patterns, Patterns::from_vec(vec![Len(1)]));
+        assert_eq!(
+            patterns,
+            Patterns::from_vec(vec![Len(NonZeroUsize::new(1).unwrap())])
+        );
     }
 
     proptest! {
@@ -385,7 +388,6 @@ mod tests {
             // The patterns should not contain empty counters.
             for i in 0..patterns.len() {
                 match &patterns[i] {
-                    Exactly(0) => assert!(false),
                     AtLeast(0) => assert!(false),
                     _ => (),
                 }

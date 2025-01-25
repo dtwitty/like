@@ -1,4 +1,5 @@
 //! A pattern matcher inspired by the SQL `LIKE` operator.
+//! The primary type is [LikeMatcher], which can be used to match strings against a `LIKE` pattern.
 //!
 //! # Syntax
 //! A `LIKE` pattern is composed of:
@@ -29,10 +30,9 @@
 //! However, there are a few reasons you might want to use this crate instead:
 //!
 //! ## Performance
-//! The matching algorithm for compiled matchers is `O(n + m)` where `n` is the length (in chars) of
-//! the string to match, and `m` is the length (in chars) of the pattern. Because `LIKE` patterns are
-//! much simpler than regular expressions, we can use highly optimized routines from the
-//! [`memchr`](https://docs.rs/memchr/latest/memchr/) crate to quickly scan the input string.
+//! Because `LIKE` patterns are much simpler than regular expressions, we can use highly optimized
+//! routines from the [`memchr`](https://docs.rs/memchr/latest/memchr/) crate to quickly scan the
+//! input string.
 //!
 //! There are also optimizations available for common patterns. For example:
 //!  - `"%world"` checks the end of the input string.
@@ -41,8 +41,13 @@
 //! - `"hello"` checks if the input string is equal to `"hello"`.
 //! - and many more!
 //!
-//! Finally, a `LikeMatcher` instance is often 10-100x faster to compile than a `Regex`. This may be
+//! Finally, a [LikeMatcher] instance is often 10-100x faster to compile than a [Regex](https://docs.rs/regex/latest/regex/struct.Regex.html). This may be
 //! beneficial in applications where you need to compile many patterns dynamically.
+//!
+//! N.B. The `regex` crate tends to be slightly faster at dealing the short patterns containing
+//! "single character" tokens, possibly due to that crate using byte-based DFAs and this crate using
+//! char-based state machines. However, for dealing with "any" tokens, this crate is almost always
+//! faster.
 //!
 //! ## Transparency
 //! This crate exposes its tokenizer, which allows building and accessing the parts of a pattern.
@@ -54,12 +59,12 @@
 //! to search.
 //!
 //! ## Reliability
-//! All utf-8 strings are valid `LIKE` patterns. Therefore, parsing can never fail.
+//! All valid utf-8 strings are valid `LIKE` patterns.
 //! This crate is also tested against a regex-based implementation to ensure correctness.
 //! It uses fuzz testing to ensure that it can handle any well-formed `&str`.
 //!
 //! # How It Works
-//! First, you compile a `LikeMatcher`. Behind the scenes, this will:
+//! First, you compile a [LikeMatcher]. Behind the scenes, this will:
 //! 1. Tokenize the pattern string, or use the supplied set of tokens.
 //! 2. Transform the tokens to an intermediate representation (IR) for optimization.
 //! 3. Apply optimizations to the IR, for example:
@@ -69,9 +74,25 @@
 //!
 //! Once you have a compiled `LikeMatcher`, you can use it to match strings.
 //! The matcher is completely thread safe, though it is not cheap to clone.
+//!
+//! ## Matching Algorithm and Performance
+//! This crate uses a modified version of
+//! [Kurt's Iterative Wildcard Matching Algorithm](http://dodobyte.com/wildcard.html). Like that
+//! algorithm, it has a worst-case time complexity of `O(n*m)`, where `n` is the length of the pattern
+//! and `m` is the length of the input string. However, there are 2 major optimizations:
+//! 1. It only backtracks unless it can prove that it is necessary, which boils down to "was there
+//! a "single character" token in the pattern since the last "any" token?"
+//! 2. It uses highly optimized substring matching routines to scan the input string.
+//!
+//! With these optimizations, inputs that contain no "single character" tokens are matched in `O(m)`
+//! time, and many other inputs are matched much faster than Kurt's original algorithm.
+//!
+//! This of course comes at the cost of some preprocessing time. However, this time is typically
+//! measured in hundreds of nanoseconds, and is almost always less than the time it takes to compile
+//! a regex. For those interested, the optimizations this crate uses are described in [patterns] module.
 mod cat;
 mod matchers;
-mod patterns;
+pub mod patterns;
 pub mod tokens;
 
 use crate::matchers::Matchers;
