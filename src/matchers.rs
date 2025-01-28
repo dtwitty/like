@@ -26,10 +26,13 @@ pub(crate) enum Matcher {
     /// Consume a literal string.
     Literal(String),
     LiteralChar(char),
+    EndLiteral(String),
+    EndLiteralChar(char),
     /// Consume any number of characters and match a literal.
     SkipToLiteral(Finder<'static>),
     /// Consume exactly the given number of characters.
     Exactly(NonZeroUsize),
+    EndExactly(NonZeroUsize),
 }
 
 impl Matcher {
@@ -84,12 +87,23 @@ impl Matcher {
                 }
             }
 
+            EndLiteral(s) => {
+                let s = s.to_string();
+                if s.chars().count() == 1 {
+                    Matcher::EndLiteralChar(s.chars().next().unwrap())
+                } else {
+                    Matcher::EndLiteral(s.to_string())
+                }
+            }
+
             SkipToLiteral(s) => {
                 let s = s.to_string();
                 Matcher::SkipToLiteral(Finder::new(s.as_bytes()).into_owned())
             }
 
             Exactly(n) => Matcher::Exactly(NonZeroUsize::try_from(*n).unwrap()),
+
+            EndExactly(n) => Matcher::EndExactly(NonZeroUsize::try_from(*n).unwrap()),
 
             AtLeast(_) => panic!("AtLeast should have been optimized away"),
 
@@ -157,6 +171,18 @@ impl Matcher {
                 }
             }
 
+            EndLiteral(lit) => s.strip_suffix(lit),
+
+            EndLiteralChar(c) => {
+                let mut chars = s.chars();
+                let d = chars.next_back()?;
+                if d == *c {
+                    Some(chars.as_str())
+                } else {
+                    None
+                }
+            }
+
             SkipToLiteral(finder) => finder
                 .find(s.as_bytes())
                 .map(|pos| unsafe { s.get_unchecked(pos + finder.needle().len()..) }),
@@ -169,6 +195,17 @@ impl Matcher {
             Exactly(n) => {
                 let mut chars = s.chars();
                 chars.nth(n.get() - 1)?;
+                Some(chars.as_str())
+            }
+
+            EndExactly(n) if n.get() == 1 => {
+                let mut chars = s.chars();
+                chars.next_back().map(|_| chars.as_str())
+            }
+
+            EndExactly(n) => {
+                let mut chars = s.chars();
+                chars.nth_back(n.get() - 1)?;
                 Some(chars.as_str())
             }
         }
@@ -248,6 +285,16 @@ impl Matchers {
                 }
             } else {
                 return false;
+            }
+
+            if !remaining_input.is_empty() && remaining_matchers.is_empty() && should_backtrack {
+                if let Some((matchers, next_try_input)) = last_wildcard {
+                    // We can backtrack!
+                    remaining_matchers = matchers;
+                    remaining_input = next_try_input;
+                } else {
+                    return false;
+                }
             }
         }
 

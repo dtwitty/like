@@ -215,16 +215,20 @@ mod tests {
 
     #[test]
     fn test_greediness() {
+        assert!(LikeMatcher::new("'%'%%'%'").matches("'a'a'a'a'a'a'a'a'a'"));
         assert!(LikeMatcher::new("'%'").matches("' 'hello' world'"));
         assert!(LikeMatcher::new("a '%' b c").matches("a 'd' b c 'd' b c"));
-        assert!(LikeMatcher::new("'%'%%'%'").matches("'a'a'a'a'a'a'a'a'a'"));
     }
 
     #[test]
     fn test_regressions() {
+        assert!(LikeMatcher::new("%a_b%b").matches("aabab"));
+        assert!(LikeMatcher::new("%a_a_%b").matches("aaabab"));
+        assert!(LikeMatcher::new("%b_").matches("bba"));
+        assert!(!LikeMatcher::new("%ab___").matches("baaaab"));
+        assert!(!LikeMatcher::new("%a").matches("ab"));
         assert!(!LikeMatcher::new("%aa_a").matches("aabb"));
         assert!(LikeMatcher::new("%ab__bb%").matches("abaabb"));
-        assert!(LikeMatcher::new("%b_").matches("bba"));
     }
 
     struct RegexLikeMatcher {

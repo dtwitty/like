@@ -47,12 +47,14 @@ use std::ops::Deref;
 pub(crate) enum Pattern<'a> {
     /// Consume a literal string.
     Literal(Cat<'a>),
+    EndLiteral(Cat<'a>),
     /// Consume any number of characters and match a literal.
     SkipToLiteral(Cat<'a>),
     /// Consume any character, at least the given number of times.
     AtLeast(usize),
     /// Consume exactly the given number of characters.
     Exactly(NonZeroUsize),
+    EndExactly(NonZeroUsize),
     /// Consume the end of the string.
     End,
     /// Consume the entire string.
@@ -102,6 +104,9 @@ impl<'a> Pattern<'a> {
             // Escaping can cause literals to be split during Tokens::from_string.
             (Literal(a), Literal(b)) => Merged(Literal(a.merge_with(b))),
 
+            // We merge end literals in reverse to preserve the order of the string.
+            (EndLiteral(a), EndLiteral(b)) => Merged(EndLiteral(b.merge_with(a))),
+
             // Combine adjacent "skip to literal" and literal.
             (SkipToLiteral(a), Literal(b)) => Merged(SkipToLiteral(a.merge_with(b))),
 
@@ -113,6 +118,7 @@ impl<'a> Pattern<'a> {
 
             // Combine character counters like "___" into a single pattern.
             (Exactly(a), Exactly(b)) => Merged(Exactly(a.checked_add(b.get()).unwrap())),
+            (EndExactly(a), EndExactly(b)) => Merged(EndExactly(a.checked_add(b.get()).unwrap())),
 
             // Combine any combination of "at least" and "exactly" counters.
             (AtLeast(a), Exactly(b)) => Merged(AtLeast(a + b.get())),
@@ -153,6 +159,10 @@ impl<'a> Pattern<'a> {
             (Exactly(a), End) => Merged(Len(a)),
 
             (Exactly(a), Len(b)) => Merged(Len(a.checked_add(b.get()).unwrap())),
+
+            (EndLiteral(s), End) => Merged(Equals(s)),
+
+            (EndLiteral(s), All) => Merged(EndsWith(s)),
 
             (End | All | StartsWith(_) | EndsWith(_) | Contains(_) | Equals(_) | Len(_), _) => {
                 unreachable!("Terminal should always be the last pattern");
@@ -225,6 +235,7 @@ impl<'a> Patterns<'a> {
 
     pub fn optimize(mut self) -> Self {
         while self.optimize_one() {}
+        while self.optimize_end() {}
         self
     }
 
@@ -299,6 +310,104 @@ impl<'a> Patterns<'a> {
 
         changed
     }
+
+    fn optimize_end(&mut self) -> bool {
+        use Pattern::*;
+
+        // Split to the slice into segments starting with SkipToLiteral.
+        let mut segments = vec![vec![]];
+        for p in &self.0 {
+            match p {
+                p @ SkipToLiteral(_) => segments.push(vec![p.clone()]),
+                _ => segments.last_mut().unwrap().push(p.clone()),
+            }
+        }
+
+        if segments.len() < 2 {
+            // There's no skipping to do.
+            return false;
+        }
+
+        // We are only interested in the first and last segments.
+        let (first, x) = segments.split_first_mut().unwrap();
+        let last = x.split_last_mut().unwrap().0;
+
+        let mut changed = false;
+        while match &last[..] {
+            [.., EndsWith(s)] => {
+                // We can merge the last segment into the first one.
+                first.push(EndLiteral(s.clone()));
+                let n = last.len() - 1;
+                last[n] = All;
+                true
+            }
+
+            [.., Equals(s)] => {
+                // We can merge the last segment into the first one.
+                first.push(EndLiteral(s.clone()));
+                let n = last.len() - 1;
+                last[n] = End;
+                true
+            }
+
+            [.., Len(n)] => {
+                // We can merge the last segment into the first one.
+                first.push(EndExactly(*n));
+                let n = last.len() - 1;
+                last[n] = End;
+                true
+            }
+
+            [.., Literal(s), End] => {
+                // We can merge the last segment into the first one.
+                first.push(EndLiteral(s.clone()));
+                last.pop();
+                let n = last.len() - 1;
+                last[n] = End;
+                true
+            }
+
+            [.., Exactly(n), End] => {
+                // We can merge the last segment into the first one.
+                first.push(EndExactly(*n));
+                last.pop();
+                let n = last.len() - 1;
+                last[n] = End;
+                true
+            }
+
+            [.., Literal(s), All] => {
+                // We can merge the last segment into the first one.
+                let n = last.len() - 1;
+                last[n - 1] = StartsWith(s.clone());
+                last.pop();
+                true
+            }
+
+            [.., SkipToLiteral(s), End] => {
+                // We can merge the last segment into the first one.
+                let n = last.len() - 1;
+                last[n - 1] = EndsWith(s.clone());
+                last.pop();
+                true
+            }
+
+            [.., SkipToLiteral(s), All] => {
+                // We can merge the last segment into the first one.
+                let n = last.len() - 1;
+                last[n - 1] = Contains(s.clone());
+                last.pop();
+                true
+            }
+
+            _ => false,
+        } {
+            changed = true;
+        }
+
+        self.0 = segments.iter().flatten().cloned().collect();
+        changed
+    }
 }
 
 impl<'a> Display for Patterns<'a> {
@@ -354,8 +463,8 @@ mod tests {
         assert_eq!(
             patterns,
             Patterns::from_vec(vec![
-                SkipToLiteral(Cat::from_str("hello")),
-                EndsWith(Cat::from_str("world"))
+                EndLiteral(Cat::from_str("world")),
+                Contains(Cat::from_str("hello"))
             ])
         );
 
@@ -372,8 +481,8 @@ mod tests {
             patterns,
             Patterns::from_vec(vec![
                 Literal(Cat::from_str("a")),
-                SkipToLiteral(Cat::from_str("b")),
-                EndsWith(Cat::from_str("c"))
+                EndLiteral(Cat::from_str("c")),
+                Contains(Cat::from_str("b"))
             ])
         );
 
