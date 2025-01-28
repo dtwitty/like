@@ -334,7 +334,7 @@ impl<'a> Patterns<'a> {
 
         let mut changed = false;
         while match &last[..] {
-            [.., EndsWith(s)] => {
+            [.., _, EndsWith(s)] => {
                 // We can merge the last segment into the first one.
                 first.push(EndLiteral(s.clone()));
                 let n = last.len() - 1;
@@ -342,7 +342,7 @@ impl<'a> Patterns<'a> {
                 true
             }
 
-            [.., Equals(s)] => {
+            [.., _, Equals(s)] => {
                 // We can merge the last segment into the first one.
                 first.push(EndLiteral(s.clone()));
                 let n = last.len() - 1;
@@ -350,7 +350,7 @@ impl<'a> Patterns<'a> {
                 true
             }
 
-            [.., Len(n)] => {
+            [.., _, Len(n)] => {
                 // We can merge the last segment into the first one.
                 first.push(EndExactly(*n));
                 let n = last.len() - 1;
@@ -367,12 +367,10 @@ impl<'a> Patterns<'a> {
                 true
             }
 
-            [.., Exactly(n), End] => {
-                // We can merge the last segment into the first one.
-                first.push(EndExactly(*n));
-                last.pop();
+            [.., Exactly(x), End] => {
                 let n = last.len() - 1;
-                last[n] = End;
+                last[n - 1] = Len(*x);
+                last.pop();
                 true
             }
 
