@@ -185,9 +185,11 @@ impl<'a> Display for Pattern<'a> {
         use Pattern::*;
         match self {
             Literal(s) => write!(f, "Literal({:?})", s.to_string()),
+            EndLiteral(s) => write!(f, "EndLiteral({:?})", s.to_string()),
             SkipToLiteral(s) => write!(f, "SkipToLiteral({:?})", s.to_string()),
             AtLeast(n) => write!(f, "AtLeast({:?})", n),
             Exactly(n) => write!(f, "Exactly({:?})", n),
+            EndExactly(n) => write!(f, "EndExactly({:?})", n),
             End => write!(f, "End"),
             All => write!(f, "All"),
             StartsWith(s) => write!(f, "StartsWith({:?})", s.to_string()),
@@ -335,66 +337,80 @@ impl<'a> Patterns<'a> {
         let mut changed = false;
         while match &last[..] {
             [.., _, EndsWith(s)] => {
-                // We can merge the last segment into the first one.
                 first.push(EndLiteral(s.clone()));
-                let n = last.len() - 1;
-                last[n] = All;
+                last.pop();
+                last.push(All);
                 true
             }
 
             [.., _, Equals(s)] => {
-                // We can merge the last segment into the first one.
                 first.push(EndLiteral(s.clone()));
-                let n = last.len() - 1;
-                last[n] = End;
+                last.pop();
+                last.push(End);
+                true
+            }
+
+            [.., SkipToLiteral(s), Len(n)] => {
+                first.push(EndExactly(*n));
+                let s = s.clone();
+                last.pop();
+                last.pop();
+                last.push(EndsWith(s));
                 true
             }
 
             [.., _, Len(n)] => {
-                // We can merge the last segment into the first one.
                 first.push(EndExactly(*n));
-                let n = last.len() - 1;
-                last[n] = End;
+                last.pop();
+                last.push(End);
                 true
             }
 
             [.., Literal(s), End] => {
-                // We can merge the last segment into the first one.
                 first.push(EndLiteral(s.clone()));
                 last.pop();
-                let n = last.len() - 1;
-                last[n] = End;
+                last.pop();
+                last.push(End);
                 true
             }
 
             [.., Exactly(x), End] => {
-                let n = last.len() - 1;
-                last[n - 1] = Len(*x);
+                let x = *x;
                 last.pop();
+                last.pop();
+                last.push(Len(x));
+                true
+            }
+
+            [.., _, Exactly(x), All] => {
+                first.push(EndExactly(*x));
+                last.pop();
+                last.pop();
+                last.push(All);
                 true
             }
 
             [.., Literal(s), All] => {
-                // We can merge the last segment into the first one.
-                let n = last.len() - 1;
-                last[n - 1] = StartsWith(s.clone());
+                let s = s.clone();
                 last.pop();
+                last.pop();
+                last.push(StartsWith(s));
                 true
             }
 
             [.., SkipToLiteral(s), End] => {
-                // We can merge the last segment into the first one.
-                let n = last.len() - 1;
-                last[n - 1] = EndsWith(s.clone());
+                let s = s.clone();
                 last.pop();
+                last.pop();
+                last.push(EndsWith(s));
                 true
             }
 
             [.., SkipToLiteral(s), All] => {
-                // We can merge the last segment into the first one.
-                let n = last.len() - 1;
-                last[n - 1] = Contains(s.clone());
+                let s = s.clone();
                 last.pop();
+                last.pop();
+                last.push(Contains(s));
                 true
             }
 
