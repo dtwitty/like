@@ -107,7 +107,6 @@ fn benchmark_matching(c: &mut Criterion) {
             |b| b.iter(|| like_matcher.matches(black_box(input))),
         );
 
-        /*
         let regex_like_matcher = RegexLikeMatcher::new(pattern);
         group.bench_function(
             format!("RegexLikeMatcher(\"{pattern}\").matches(\"{input}\")"),
@@ -119,7 +118,18 @@ fn benchmark_matching(c: &mut Criterion) {
             format!("WildMatchPattern(\"{pattern}\").matches(\"{input}\")"),
             |b| b.iter(|| wild_like_matcher.matches(black_box(input))),
         );
-         */
+
+        let char_pattern = pattern.chars().collect::<Vec<_>>();
+        let wildcard_matcher = wildcard::WildcardBuilder::new(&char_pattern)
+            .with_any_metasymbol('%')
+            .with_one_metasymbol('_')
+            .build()
+            .unwrap();
+        let char_slice = input.chars().collect::<Vec<_>>();
+        group.bench_function(
+            format!("WildcardMatcher(\"{pattern}\").matches(\"{input}\")"),
+            |b| b.iter(|| wildcard_matcher.is_match(black_box(&char_slice))),
+        );
     }
 
     group.finish();
