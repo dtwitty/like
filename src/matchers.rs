@@ -286,16 +286,6 @@ impl Matchers {
             } else {
                 return false;
             }
-
-            if !remaining_input.is_empty() && remaining_matchers.is_empty() && should_backtrack {
-                if let Some((matchers, next_try_input)) = last_wildcard {
-                    // We can backtrack!
-                    remaining_matchers = matchers;
-                    remaining_input = next_try_input;
-                } else {
-                    return false;
-                }
-            }
         }
 
         // We have exhausted all matchers. See if there is any more input.
