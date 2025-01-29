@@ -1,0 +1,6 @@
+---
+source: src/patterns.rs
+expression: snap
+snapshot_kind: text
+---
+("_x_", [Exactly(1), Literal("x"), Len(1)])

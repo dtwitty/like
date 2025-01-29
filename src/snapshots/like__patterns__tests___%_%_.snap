@@ -1,0 +1,6 @@
+---
+source: src/patterns.rs
+expression: snap
+snapshot_kind: text
+---
+("_%_%_", [Exactly(3), All])

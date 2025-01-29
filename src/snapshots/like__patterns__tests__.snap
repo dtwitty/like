@@ -1,0 +1,6 @@
+---
+source: src/patterns.rs
+expression: snap
+snapshot_kind: text
+---
+("", [End])

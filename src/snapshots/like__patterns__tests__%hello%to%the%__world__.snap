@@ -1,0 +1,6 @@
+---
+source: src/patterns.rs
+expression: snap
+snapshot_kind: text
+---
+("%hello%to%the%__world__", [EndExactly(2), EndLiteral("world"), EndExactly(2), SkipToLiteral("hello"), SkipToLiteral("to"), Contains("the")])
