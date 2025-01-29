@@ -38,6 +38,7 @@ use crate::cat::Cat;
 use crate::patterns::MergeResult::*;
 use crate::patterns::Pattern::*;
 use crate::tokens::{Token, Tokens};
+use std::fmt::{Display, Formatter};
 use std::num::NonZeroUsize;
 use std::ops::Deref;
 
@@ -169,6 +170,26 @@ fn maybe_prepend_exactly(n: usize, p: Pattern) -> MergeResult {
     }
 }
 
+impl<'a> Display for Pattern<'a> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        use Pattern::*;
+        match self {
+            Literal(s) => write!(f, "Literal({:?})", s.to_string()),
+            SkipToLiteral(s) => write!(f, "SkipToLiteral({:?})", s.to_string()),
+            AtLeast(n) => write!(f, "AtLeast({:?})", n),
+            Exactly(n) => write!(f, "Exactly({:?})", n),
+            End => write!(f, "End"),
+            All => write!(f, "All"),
+            StartsWith(s) => write!(f, "StartsWith({:?})", s.to_string()),
+            EndsWith(s) => write!(f, "EndsWith({:?})", s.to_string()),
+            Contains(s) => write!(f, "Contains({:?})", s.to_string()),
+            Equals(s) => write!(f, "Equals({:?})", s.to_string()),
+            Len(n) => write!(f, "Len({:?})", n),
+            Noop => write!(f, "Noop"),
+        }
+    }
+}
+
 /// A sequence of patterns.
 /// This can be thought of as the "Intermediate Representation" (IR) of the matching engine.
 /// We run optimizations on it to reduce the search space during matching.
@@ -277,6 +298,20 @@ impl<'a> Patterns<'a> {
         self.0.truncate(done_idx);
 
         changed
+    }
+}
+
+impl<'a> Display for Patterns<'a> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "[")?;
+        if let Some((last, rest)) = self.0.split_last() {
+            for p in rest {
+                write!(f, "{}, ", p)?;
+            }
+            write!(f, "{}", last)?;
+        }
+        write!(f, "]")?;
+        Ok(())
     }
 }
 
@@ -392,6 +427,36 @@ mod tests {
                     _ => (),
                 }
             }
+        }
+    }
+
+    #[test]
+    fn snapshot_test() {
+        let patterns = [
+            "",
+            "%",
+            "_",
+            "_x_",
+            "________",
+            "hello",
+            "%hello%",
+            "x__y",
+            "%abc",
+            "abc%",
+            "lo%rld",
+            "%hello%to%the%world",
+            "%hello%to%the%world%",
+            "%hello%to%the%__world%",
+            "%hello%to%the%__world__%",
+            "%hello%to%the%__world__",
+            "%hello%to%the%__world%__",
+        ];
+
+        for s in patterns {
+            let tokens = Tokens::from_str(s);
+            let patterns = Patterns::from_tokens(&tokens).optimize();
+            let snap = format!("({:?}, {})", s, patterns);
+            insta::assert_snapshot!(s, snap);
         }
     }
 }

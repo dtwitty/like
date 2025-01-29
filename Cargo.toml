@@ -12,17 +12,16 @@ name = "profile"
 path = "src/bin/profile.rs"
 
 [dependencies]
-bit-set = "0.8.0"
 memchr = "2.7.4"
-rustc-hash = "2.1.0"
 clap = { version = "4.5.18", features = ["derive"] }
-bytecount = "0.6.8"
+insta = "1.42.1"
 
 [dev-dependencies]
 proptest = "1.6.0"
 criterion = "0.5.1"
 regex = "1.11.1"
 wildmatch = "2.4.0"
+insta = "1.42.1"
 
 [[bench]]
 name = "bench"
@@ -30,4 +29,3 @@ harness = false
 
 [profile.release]
 debug = true
-
