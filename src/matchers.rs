@@ -188,8 +188,13 @@ impl Matcher {
                 .map(|pos| unsafe { s.get_unchecked(pos + finder.needle().len()..) }),
 
             Exactly(n) if n.get() == 1 => {
-                let mut chars = s.chars();
-                chars.next().map(|_| chars.as_str())
+                if s.is_empty() {
+                    return None;
+                }
+
+                let leading_ones = s.as_bytes()[0].leading_ones();
+                let num_bytes = 1.max(leading_ones);
+                Some(unsafe { s.get_unchecked(num_bytes as usize..) })
             }
 
             Exactly(n) => {

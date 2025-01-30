@@ -34,6 +34,12 @@ impl RegexLikeMatcher {
 
 fn patterns_and_inputs() -> &'static [(&'static str, &'static str)] {
     &[
+        ("", ""),
+        ("%", ""),
+        ("_", ""),
+        ("_b_", "abc"),
+        ("a_c", "abc"),
+        ("x_y", "abc"),
         (
             "%1%22%333%4444%",
             "a super long text that contains an example of the given pattern, which starts with a \
@@ -52,9 +58,6 @@ fn patterns_and_inputs() -> &'static [(&'static str, &'static str)] {
         ("________", "aaaaaaaaaaaaaaaa"),
         ("exact-match", "exact-match"),
         ("%a%", "abc"),
-        ("_b_", "abc"),
-        ("a_c", "abc"),
-        ("x_y", "abc"),
         ("%hello%", "this is a hello world example"),
         ("_h_llo", "oh hello there"),
         ("%abc", "1234567890abcdefghijklmnopqrstuvwxyz"),
@@ -69,9 +72,6 @@ fn patterns_and_inputs() -> &'static [(&'static str, &'static str)] {
         ),
         ("l%o%r%g", "lots_of_random_gibberish"),
         ("start%middle%end", "start_some_content_middle_end"),
-        ("", ""),
-        ("%", ""),
-        ("_", ""),
     ]
 }
 
