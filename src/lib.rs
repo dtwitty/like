@@ -268,7 +268,7 @@ mod tests {
         #[test]
         // Test against a reference regex implementation.
         // Use a limited alphabet to increase the change of matches.
-        fn test_matching_correctness(pattern in r"[ab%_]*", input in r"[ab]*") {
+        fn test_matching_correctness(pattern in r"[ab%é€𝄞_\\]*", input in r"[ab%é€𝄞_\\]*") {
             let like_matcher = LikeMatcher::new(&pattern);
             let regex_matcher = RegexLikeMatcher::new(&pattern);
             let like_result = like_matcher.matches(&input);
