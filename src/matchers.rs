@@ -247,8 +247,7 @@ impl Matchers {
         let mut last_wildcard = None;
         let mut should_backtrack = false;
 
-        while !remaining_matchers.is_empty() {
-            let m = &remaining_matchers[0];
+        while let Some((m, rest)) = remaining_matchers.split_first() {
             if m.enable_backtracking() {
                 should_backtrack = true;
             }
@@ -260,14 +259,14 @@ impl Matchers {
                     let needle_len = finder.needle().len();
                     let rem_len = rem.len();
                     let matched_at = remaining_input.len() - rem_len - needle_len;
-                    let t = remaining_input.get(matched_at..).unwrap();
+                    let t = unsafe { remaining_input.get_unchecked(matched_at..) };
                     let next_try_input = strip_char(t);
                     last_wildcard = Some((remaining_matchers, next_try_input));
                     should_backtrack = false;
                 }
 
                 remaining_input = rem;
-                remaining_matchers = &remaining_matchers[1..];
+                remaining_matchers = rest;
             } else if !remaining_input.is_empty() {
                 match (m, last_wildcard) {
                     (SkipToLiteral(_), _) => {
