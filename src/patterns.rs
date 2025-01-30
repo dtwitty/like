@@ -318,15 +318,18 @@ impl<'a> Patterns<'a> {
 
         // Split to the slice into segments starting with SkipToLiteral.
         let mut segments = vec![vec![]];
-        for p in &self.0 {
+
+        for p in self.0.drain(..) {
             match p {
-                p @ SkipToLiteral(_) => segments.push(vec![p.clone()]),
-                _ => segments.last_mut().unwrap().push(p.clone()),
+                p @ SkipToLiteral(_) => segments.push(vec![p]),
+                _ => segments.last_mut().unwrap().push(p),
             }
         }
 
         if segments.len() < 2 {
             // There's no skipping to do.
+            self.0
+                .extend(segments.into_iter().flat_map(|x| x.into_iter()));
             return false;
         }
 
@@ -419,7 +422,8 @@ impl<'a> Patterns<'a> {
             changed = true;
         }
 
-        self.0 = segments.iter().flatten().cloned().collect();
+        self.0
+            .extend(segments.into_iter().flat_map(|x| x.into_iter()));
         changed
     }
 }
