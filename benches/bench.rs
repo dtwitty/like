@@ -107,6 +107,7 @@ fn benchmark_matching(c: &mut Criterion) {
             |b| b.iter(|| like_matcher.matches(black_box(input))),
         );
 
+        /*
         let regex_like_matcher = RegexLikeMatcher::new(pattern);
         group.bench_function(
             format!("RegexLikeMatcher(\"{pattern}\").matches(\"{input}\")"),
@@ -130,6 +131,7 @@ fn benchmark_matching(c: &mut Criterion) {
             format!("WildcardMatcher(\"{pattern}\").matches(\"{input}\")"),
             |b| b.iter(|| wildcard_matcher.is_match(black_box(&char_slice))),
         );
+        */
     }
 
     group.finish();
