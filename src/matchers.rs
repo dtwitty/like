@@ -114,51 +114,6 @@ impl Matcher {
     pub fn try_match<'a>(&self, s: &'a str) -> Option<&'a str> {
         use Matcher::*;
         match self {
-            All => Some(""),
-
-            End => s.is_empty().then_some(""),
-
-            StartsWith(prefix) => s.starts_with(prefix).then_some(""),
-
-            StartsWithChar(c) => s.chars().next().filter(|d| d == c).and(Some("")),
-
-            EndsWith(suffix) => s.ends_with(suffix).then_some(""),
-
-            EndsWithChar(c) => s.chars().next_back().filter(|d| d == c).and(Some("")),
-
-            Contains(finder) => finder.find(s.as_bytes()).and(Some("")),
-
-            Equals(s2) => (s == s2).then_some(""),
-
-            EqualsChar(c) => {
-                let mut chars = s.chars();
-                let d = chars.next()?;
-                if d == *c && chars.next().is_none() {
-                    Some("")
-                } else {
-                    None
-                }
-            }
-
-            Len(n) if n.get() == 1 => {
-                let mut chars = s.chars();
-                chars.next()?;
-                if chars.next().is_none() {
-                    Some("")
-                } else {
-                    None
-                }
-            }
-
-            Len(n) => {
-                let mut chars = s.chars();
-                if chars.nth(n.get() - 1).is_some() && chars.next().is_none() {
-                    Some("")
-                } else {
-                    None
-                }
-            }
-
             Literal(lit) => s.strip_prefix(lit),
 
             LiteralChar(c) => {
@@ -212,6 +167,51 @@ impl Matcher {
                 let mut chars = s.chars();
                 chars.nth_back(n.get() - 1)?;
                 Some(chars.as_str())
+            }
+
+            All => Some(""),
+
+            End => s.is_empty().then_some(""),
+
+            StartsWith(prefix) => s.starts_with(prefix).then_some(""),
+
+            StartsWithChar(c) => s.chars().next().filter(|d| d == c).and(Some("")),
+
+            EndsWith(suffix) => s.ends_with(suffix).then_some(""),
+
+            EndsWithChar(c) => s.chars().next_back().filter(|d| d == c).and(Some("")),
+
+            Contains(finder) => finder.find(s.as_bytes()).and(Some("")),
+
+            Equals(s2) => (s == s2).then_some(""),
+
+            EqualsChar(c) => {
+                let mut chars = s.chars();
+                let d = chars.next()?;
+                if d == *c && chars.next().is_none() {
+                    Some("")
+                } else {
+                    None
+                }
+            }
+
+            Len(n) if n.get() == 1 => {
+                let mut chars = s.chars();
+                chars.next()?;
+                if chars.next().is_none() {
+                    Some("")
+                } else {
+                    None
+                }
+            }
+
+            Len(n) => {
+                let mut chars = s.chars();
+                if chars.nth(n.get() - 1).is_some() && chars.next().is_none() {
+                    Some("")
+                } else {
+                    None
+                }
             }
         }
     }
